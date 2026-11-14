@@ -1,0 +1,5 @@
+{
+  "name": "productivity-tracker",
+  "private": true,
+  "packageManager": "pnpm@12.6.0"
+}
