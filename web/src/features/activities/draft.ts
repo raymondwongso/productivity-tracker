@@ -3,14 +3,29 @@ import type {
   ActivityLabel,
   CategorySlug,
   CreateActivityRequest,
+  CreateActivitySeriesRequest,
   GracePeriods,
+  RepeatFrequency,
+  RepeatRule,
   UpdateActivityRequest,
+  Weekday,
   WorkoutFocus,
   WorkoutUnit,
 } from "@productivitytracker/shared";
-import { computeLabels } from "@productivitytracker/shared";
-import { addMinutes, fromLocalInput, toLocalInput } from "@/lib/dates";
+import { checkRepeatRule, computeLabels, isoWeekday, latestRepeatUntil, occurrenceDates } from "@productivitytracker/shared";
+import { addMinutes, fromLocalInput, localTimeZone, toDateKey, toLocalInput } from "@/lib/dates";
 import { DEFAULT_MINUTES } from "./meta";
+
+/** How a new activity repeats, as the form holds it. Only new activities can repeat. */
+export interface DraftRepeat {
+  frequency: "none" | RepeatFrequency;
+  /** Every N days or weeks; a string while typing. */
+  every: string;
+  /** Weekly only. */
+  weekdays: Weekday[];
+  /** Inclusive local end date, YYYY-MM-DD. */
+  until: string;
+}
 
 /** Form state of the activity modal. Number fields stay strings while typing. */
 export interface Draft {
@@ -31,6 +46,13 @@ export interface Draft {
   projectId: number | null;
   titleId: number | null;
   gameId: number | null;
+  repeat: DraftRepeat;
+}
+
+/** Doesn't repeat; switching to weekly starts on the first occurrence's weekday, for a month. */
+function noRepeat(start: Date): DraftRepeat {
+  const date = toDateKey(start);
+  return { frequency: "none", every: "1", weekdays: [isoWeekday(date)], until: latestRepeatUntil(date) };
 }
 
 const localOf = (iso: string | null) => toLocalInput(iso ? new Date(iso) : null);
@@ -54,6 +76,7 @@ export function draftFromActivity(a: Activity): Draft {
     projectId: a.category === "work" ? (a.project?.id ?? null) : null,
     titleId: a.category === "watch" ? (a.title?.id ?? null) : null,
     gameId: a.category === "gaming" ? (a.game?.id ?? null) : null,
+    repeat: noRepeat(new Date(a.plannedStart)),
   };
 }
 
@@ -75,6 +98,7 @@ export function newDraft(category: CategorySlug, start: Date): Draft {
     projectId: null,
     titleId: null,
     gameId: null,
+    repeat: noRepeat(start),
   };
 }
 
@@ -128,6 +152,44 @@ export interface DraftErrors {
   planned?: string;
   actual?: string;
   numbers?: string;
+  repeat?: string;
+}
+
+/** Local date of the planned start, YYYY-MM-DD: the first occurrence of a series. */
+function startsOnOf(d: Draft): string | null {
+  const start = fromLocalInput(d.plannedStart);
+  return start ? toDateKey(start) : null;
+}
+
+/** The rule the API gets, or null when the draft doesn't repeat. */
+export function repeatRuleOf(d: Draft): RepeatRule | null {
+  const r = d.repeat;
+  if (r.frequency === "none") return null;
+  return {
+    frequency: r.frequency,
+    every: r.every.trim() === "" ? NaN : Number(r.every),
+    weekdays: r.frequency === "weekly" ? [...r.weekdays].sort((a, b) => a - b) : null,
+    until: r.until,
+  };
+}
+
+/** Why the repeat settings can't be saved, or undefined. */
+function repeatError(d: Draft): string | undefined {
+  const rule = repeatRuleOf(d);
+  const startsOn = startsOnOf(d);
+  if (!rule || !startsOn) return undefined;
+  return checkRepeatRule(startsOn, rule) ?? undefined;
+}
+
+/**
+ * The local dates the series would create, as the API will: null when the draft doesn't
+ * repeat or the rule isn't valid yet.
+ */
+export function previewOccurrences(d: Draft): string[] | null {
+  const rule = repeatRuleOf(d);
+  const startsOn = startsOnOf(d);
+  if (!rule || !startsOn || checkRepeatRule(startsOn, rule)) return null;
+  return occurrenceDates(startsOn, rule);
 }
 
 const isWhole = (s: string) => s.trim() === "" || (/^\d+$/.test(s.trim()) && Number(s) <= 100_000);
@@ -150,6 +212,8 @@ export function validateDraft(d: Draft): DraftErrors {
   if (d.category === "meals") {
     if (!isWhole(d.totalCalories) || d.mealItems.some((i) => !isWhole(i.calories))) e.numbers = "Calories must be whole numbers.";
   }
+  const repeat = t ? repeatError(d) : undefined;
+  if (repeat) e.repeat = repeat;
   return e;
 }
 
@@ -217,4 +281,11 @@ export function toCreateRequest(d: Draft): CreateActivityRequest {
     case "sleep":
       return { ...base, category: "sleep" };
   }
+}
+
+/** The first occurrence plus its rule, kept in the browser's time zone. Null when it doesn't repeat. */
+export function toCreateSeriesRequest(d: Draft): CreateActivitySeriesRequest | null {
+  const rule = repeatRuleOf(d);
+  if (!rule) return null;
+  return { ...toCreateRequest(d), repeat: { ...rule, timeZone: localTimeZone() } };
 }

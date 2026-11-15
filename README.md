@@ -2,7 +2,9 @@
 
 Plan your days in a calendar and record what actually happened. Activities (sleep, work, workouts, meals, things you watch, games you play, and misc for errands, driving and anything else) have planned and actual times, and each one is labeled automatically: pending, late, premature, overrun, done or cancelled. One activity can carry several labels, for example late and overrun. Tracker pages (Sleep, Fitness, Work, Cinema and Gaming) turn the finished activities in a date range into tiles and charts. Misc has no tracker page and no stats route.
 
-A pnpm monorepo with three packages: a Fastify API (`api/`), a Next.js web app (`web/`), and `shared/`, which holds the types and label rules both use.
+Activities can repeat: create a daily or weekly series once and every occurrence lands on the calendar (see [Recurring activities](#recurring-activities)).
+
+A pnpm monorepo with three packages: a Fastify API (`api/`), a Next.js web app (`web/`), and `shared/`, which holds the types, label rules and repeat rules both use.
 
 | Service | Port |
 | --- | --- |
@@ -67,13 +69,26 @@ All routes are under `/api`; everything except `health`, `auth/register` and `au
 | --- | --- |
 | Health | `GET /health` |
 | Auth | `POST /auth/register`, `POST /auth/login`, `POST /auth/logout`, `GET /auth/me` |
-| Activities | `GET /activities?from=&to=&category=` (ISO times, at most 92 days, optional category slug), `POST /activities`, `GET/PATCH/DELETE /activities/:id`, `POST /activities/:id/cancel`, `POST /activities/:id/restore` |
+| Activities | `GET /activities?from=&to=&category=` (ISO times, at most 92 days, optional category slug), `POST /activities`, `GET/PATCH/DELETE /activities/:id` (`PATCH` and `DELETE` take `?scope=this\|following`, default `this`), `POST /activities/:id/cancel`, `POST /activities/:id/restore` |
+| Series | `POST /activity-series` (a create-activity body plus `repeat`), `GET /activity-series/:id` |
 | Reference data | `GET /categories`, `GET /settings/grace-periods`, `GET /projects?status=ongoing`, `POST /projects`, `GET /titles`, `POST /titles`, `GET /games`, `POST /games` |
 | Stats | `GET /stats/sleep`, `/stats/fitness`, `/stats/work`, `/stats/cinema`, `/stats/gaming`, each `?from=YYYY-MM-DD&to=YYYY-MM-DD&tz=Area/City` (inclusive local days, at most 92) |
 
 Request and response types are in `shared/src/index.ts`. `Activity` is a union on `category`. `PATCH` is partial, and `items` replaces the whole list. The category can't be changed, and fields from another category are refused with 400.
 
 Stats count finished activities only (actual start and end, not cancelled), on the local date of their planned start in `tz`. Responses carry every day of the range, and `averagedDays` (the days up to today) is what per-day averages divide by.
+
+## Recurring activities
+
+A series repeats daily or weekly (on chosen weekdays), every 1 to 30 days or weeks, and ends on a date **at most one month** after its first occurrence. The first occurrence must match the rule.
+
+- Every occurrence is a real `activities` row with `series_id`, created up front in one transaction. Calendar, trackers, stats and stored labels treat occurrences like any other activity.
+- Occurrences keep the first one's local start and end time in the series' `time_zone` (sent by the browser), so 07:00 stays 07:00 across a DST change.
+- Actual times on the create request apply to the first occurrence only; the others start as `{pending}`.
+- `occurrenceDates` and `checkRepeatRule` (`shared/src/recurrence.ts`) decide the dates on both sides, so the modal can preview "Creates 9 activities".
+- `scope=following` on `PATCH` carries what changed on that occurrence (name, notes, category fields, a new local start time and duration) to every later occurrence of the series. Actual times stay on the edited occurrence, and labels are recomputed only where a time changed.
+- `scope=following` on `DELETE` removes that occurrence and every later one, and ends the series the day before. A series whose last occurrence is deleted is removed. Cancel and restore apply to one occurrence.
+- Changing the rule itself (weekdays, interval) is not supported: delete this and following, then create a new series.
 
 ## Database
 
@@ -84,6 +99,7 @@ Migrations are plain SQL in `api/db/migrations/`, applied in order and tracked i
 - Projects, titles and games belong to a user and are referenced from the work, watch and gaming details.
 - Stats are computed on each request from the existing rows (`stats.repository.ts` reads one category's activities for the range; `lib/stats.ts` aggregates them). There are no stats tables.
 - Activities last at most 24 hours, which lets the calendar's range query use the `planned_start` index from both ends.
+- `activity_series` (`014_create_activity_series.sql`) stores only a series' rule; names, times and category fields live on each occurrence. CHECK constraints enforce the frequencies, the interval, the weekdays and the one-month cap.
 
 ## Project structure
 
@@ -92,8 +108,8 @@ api/src/
   controllers/            HTTP layer, one file per resource (JSON-schema validation)
   services/               business logic, one file per use case
   repositories/postgres/  raw SQL, one file per resource
-  lib/                    auth, password hashing, activity validation, notes sanitizing, stats range + aggregation
-shared/src/               API types and computeLabels
+  lib/                    auth, password hashing, activity validation, notes sanitizing, stats range + aggregation, time-zone math for series
+shared/src/               API types, computeLabels and the repeat rules (occurrenceDates, checkRepeatRule)
 web/src/
   app/                    routes only: (auth)/login|register, (app)/calendar|sleep|fitness|work|cinema|gaming (workout, meals redirect to fitness)
   components/             app shell, auth gate, UI primitives (button, field, dropdown, modal, toast)

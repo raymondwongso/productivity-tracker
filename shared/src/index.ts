@@ -1,4 +1,5 @@
 export * from "./labels.js";
+export * from "./recurrence.js";
 
 // ---------- errors and auth ----------
 
@@ -120,6 +121,8 @@ export interface ActivityBase {
   cancelledAt: string | null;
   /** Stored; set by the API when the activity is written. */
   labels: ActivityLabel[];
+  /** The series this activity is an occurrence of; null for a one-off activity. */
+  seriesId: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -211,6 +214,50 @@ export type UpdateActivityRequest = Partial<ActivityFields> &
 
 /** The category-specific part of a create or update request. */
 export type CategoryFieldsInput = Omit<UpdateActivityRequest, keyof ActivityFields>;
+
+// ---------- recurring activities (series) ----------
+// A series is created once and stored as one real activity per occurrence. The series row keeps
+// only the rule; names, times and category fields live on each occurrence.
+
+/** ISO weekday: 1 = Monday … 7 = Sunday. */
+export type Weekday = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+
+export type RepeatFrequency = "daily" | "weekly";
+
+export interface RepeatRule {
+  frequency: RepeatFrequency;
+  /** Every N days or weeks, 1 to 30. */
+  every: number;
+  /** Weekly only (at least one); null for daily. */
+  weekdays: Weekday[] | null;
+  /** Inclusive local date, YYYY-MM-DD, at most one month after the first occurrence. */
+  until: string;
+}
+
+export interface ActivitySeries extends RepeatRule {
+  id: number;
+  categoryId: number;
+  /** Local date of the first occurrence, YYYY-MM-DD. */
+  startsOn: string;
+  /** IANA zone the occurrences keep their local times in. */
+  timeZone: string;
+  /** Occurrences that still exist. */
+  occurrences: number;
+}
+
+/**
+ * The first occurrence, as a create request, plus how it repeats. Actual times, when given,
+ * apply to the first occurrence only.
+ */
+export type CreateActivitySeriesRequest = CreateActivityRequest & { repeat: RepeatRule & { timeZone: string } };
+
+export interface CreateActivitySeriesResponse {
+  series: ActivitySeries;
+  activities: Activity[];
+}
+
+/** Which occurrences an edit or delete touches: this one, or this one and every later one. */
+export type EditScope = "this" | "following";
 
 // ---------- trackers (stats) ----------
 // A finished activity (actual start and end, not cancelled) counts on the local date of its

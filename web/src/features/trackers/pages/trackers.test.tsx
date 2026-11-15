@@ -54,7 +54,7 @@ const work: WorkStats = {
 };
 const task = (id: number, day: string, o: Partial<WorkActivity> = {}): WorkActivity => ({
   id, category: "work", categoryId: 2, name: `Task ${id}`, plannedStart: new Date(`${day}T09:00`).toISOString(), plannedEnd: new Date(`${day}T10:00`).toISOString(),
-  actualStart: null, actualEnd: null, notes: "", cancelledAt: null, labels: ["pending"], createdAt: "", updatedAt: "", project: { id: 1, name: "Website" }, ...o,
+  actualStart: null, actualEnd: null, notes: "", cancelledAt: null, labels: ["pending"], seriesId: null, createdAt: "", updatedAt: "", project: { id: 1, name: "Website" }, ...o,
 });
 
 beforeEach(() => {

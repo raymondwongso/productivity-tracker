@@ -13,6 +13,8 @@ const ROUTES: [string, string][] = [
   ["DELETE", "/api/activities/1"],
   ["POST", "/api/activities/1/cancel"],
   ["POST", "/api/activities/1/restore"],
+  ["POST", "/api/activity-series"],
+  ["GET", "/api/activity-series/1"],
   ["GET", "/api/categories"],
   ["GET", "/api/settings/grace-periods"],
   ["GET", "/api/projects"],
@@ -45,6 +47,8 @@ test("bad bodies and queries are rejected with 400 { error }", async () => {
   try {
     await app.ready();
     const cookie = `pt_session=${app.jwt.sign({ id: 1 })}`;
+    const sleep = { category: "sleep", name: "x", plannedStart: "2026-11-14T09:00:00Z", plannedEnd: "2026-11-14T10:00:00Z" };
+    const repeat = { frequency: "weekly", every: 1, weekdays: [6], until: "2026-11-20", timeZone: "UTC" };
     const cases: [string, string, unknown][] = [
       ["GET", "/api/activities", undefined],
       ["GET", "/api/activities?from=yesterday&to=today", undefined],
@@ -62,6 +66,16 @@ test("bad bodies and queries are rejected with 400 { error }", async () => {
       ["POST", "/api/activities", { category: "workout", name: "x", plannedStart: "2026-11-14T09:00:00Z", plannedEnd: "2026-11-14T10:00:00Z", focus: "napping" }],
       ["POST", "/api/activities", { category: "meals", name: "x", plannedStart: "2026-11-14T09:00:00Z", plannedEnd: "2026-11-14T10:00:00Z", items: [{ calories: 5 }] }],
       ["PATCH", "/api/activities/1", { actualStart: "noon" }],
+      ["PATCH", "/api/activities/1?scope=all", { name: "x" }],
+      ["DELETE", "/api/activities/1?scope=everything", undefined],
+      ["GET", "/api/activity-series/abc", undefined],
+      ["POST", "/api/activity-series", { ...sleep }],
+      ["POST", "/api/activity-series", { ...sleep, repeat: { ...repeat, frequency: "monthly" } }],
+      ["POST", "/api/activity-series", { ...sleep, repeat: { ...repeat, every: 0 } }],
+      ["POST", "/api/activity-series", { ...sleep, repeat: { ...repeat, every: 31 } }],
+      ["POST", "/api/activity-series", { ...sleep, repeat: { ...repeat, weekdays: [0] } }],
+      ["POST", "/api/activity-series", { ...sleep, repeat: { ...repeat, until: "next month" } }],
+      ["POST", "/api/activity-series", { ...sleep, repeat: { frequency: "daily", every: 1, weekdays: null, until: "2026-11-20" } }],
       ["POST", "/api/titles", { name: "Dune", kind: "podcast" }],
       ["GET", "/api/projects?status=archived", undefined],
     ];

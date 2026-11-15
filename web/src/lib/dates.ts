@@ -50,6 +50,9 @@ export function parseDateKey(s: string | null): Date | null {
   return d.getMonth() === Number(m[2]) - 1 ? d : null;
 }
 
+/** The browser's IANA time zone, e.g. `Asia/Jakarta`. */
+export const localTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 /** Value for `<input type="datetime-local">`: `2026-11-14T07:05`. */
 export const toLocalInput = (d: Date | null) => (d ? `${toDateKey(d)}T${formatHm(d)}` : "");
 /** `<input type="datetime-local">` value → Date (local); null when empty or invalid. */
@@ -76,3 +79,9 @@ export function viewTitle(view: CalendarView, anchor: Date): string {
 
 /** `Sat, Nov 14 at 09:00` */
 export const formatSlot = (d: Date) => `${DOW[weekdayIndex(d)]}, ${MON[d.getMonth()]} ${d.getDate()} at ${formatHm(d)}`;
+
+/** `2026-11-16` → `Mon, Nov 16`; the key itself when malformed. */
+export function formatDateKey(key: string): string {
+  const d = parseDateKey(key);
+  return d ? `${DOW[weekdayIndex(d)]}, ${MON[d.getMonth()]} ${d.getDate()}` : key;
+}

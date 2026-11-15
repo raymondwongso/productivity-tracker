@@ -6,6 +6,7 @@ import rateLimit from "@fastify/rate-limit";
 import Fastify from "fastify";
 import type { Config } from "./config.js";
 import { activitiesController } from "./controllers/activities.controller.js";
+import { activitySeriesController } from "./controllers/activity-series.controller.js";
 import { authController } from "./controllers/auth.controller.js";
 import { categoriesController } from "./controllers/categories.controller.js";
 import { gamesController } from "./controllers/games.controller.js";
@@ -16,6 +17,7 @@ import { statsController } from "./controllers/stats.controller.js";
 import { titlesController } from "./controllers/titles.controller.js";
 import { AppError } from "./errors.js";
 import { COOKIE_NAME } from "./lib/auth.js";
+import { ActivitySeriesRepository } from "./repositories/postgres/activity-series.repository.js";
 import { ActivityRepository } from "./repositories/postgres/activity.repository.js";
 import { CategoryRepository } from "./repositories/postgres/category.repository.js";
 import { GameRepository } from "./repositories/postgres/game.repository.js";
@@ -26,11 +28,13 @@ import { StatsRepository } from "./repositories/postgres/stats.repository.js";
 import { TitleRepository } from "./repositories/postgres/title.repository.js";
 import { UserRepository } from "./repositories/postgres/user.repository.js";
 import { CancelActivityService } from "./services/cancel-activity.service.js";
+import { CreateActivitySeriesService } from "./services/create-activity-series.service.js";
 import { CreateActivityService } from "./services/create-activity.service.js";
 import { CreateGameService } from "./services/create-game.service.js";
 import { CreateProjectService } from "./services/create-project.service.js";
 import { CreateTitleService } from "./services/create-title.service.js";
 import { DeleteActivityService } from "./services/delete-activity.service.js";
+import { GetActivitySeriesService } from "./services/get-activity-series.service.js";
 import { GetActivityService } from "./services/get-activity.service.js";
 import { GetCinemaStatsService } from "./services/get-cinema-stats.service.js";
 import { GetCurrentUserService } from "./services/get-current-user.service.js";
@@ -94,6 +98,7 @@ export function buildApp(config: Config) {
   const titles = new TitleRepository(pool);
   const games = new GameRepository(pool);
   const activities = new ActivityRepository(pool);
+  const series = new ActivitySeriesRepository(pool);
   const stats = new StatsRepository(pool);
   const refs = { projects, titles, games };
 
@@ -136,10 +141,17 @@ export function buildApp(config: Config) {
       listActivities: new ListActivitiesService(activities),
       getActivity: new GetActivityService(activities),
       createActivity: new CreateActivityService(categories, settings, refs, activities),
-      updateActivity: new UpdateActivityService(settings, refs, activities),
-      deleteActivity: new DeleteActivityService(activities),
+      updateActivity: new UpdateActivityService(settings, refs, activities, series),
+      deleteActivity: new DeleteActivityService(activities, series),
       cancelActivity: new CancelActivityService(activities),
       restoreActivity: new RestoreActivityService(settings, activities),
+    }),
+    { prefix: "/api" },
+  );
+  app.register(
+    activitySeriesController({
+      createActivitySeries: new CreateActivitySeriesService(categories, settings, refs, series, activities),
+      getActivitySeries: new GetActivitySeriesService(series),
     }),
     { prefix: "/api" },
   );

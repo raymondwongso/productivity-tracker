@@ -10,7 +10,7 @@ afterEach(cleanup);
 const at = (hhmm: string) => new Date(`2026-11-14T${hhmm}`).toISOString();
 const base: ActivityBase = {
   id: 1, categoryId: 1, name: "Thing", plannedStart: at("09:00"), plannedEnd: at("10:00"), actualStart: at("09:15"), actualEnd: at("10:30"),
-  notes: "<p>Keep <strong>focus</strong></p>", cancelledAt: null, labels: ["late", "overrun"], createdAt: "", updatedAt: "",
+  notes: "<p>Keep <strong>focus</strong></p>", cancelledAt: null, labels: ["late", "overrun"], seriesId: null, createdAt: "", updatedAt: "",
 };
 const cat = (name: string): Category => ({ id: 1, slug: "sleep", name, color: "#9dcffa", sortOrder: 1 });
 
@@ -94,5 +94,13 @@ describe("ActivityCard", () => {
     card.focus();
     await userEvent.keyboard("{Enter}");
     expect(onOpen).toHaveBeenCalledTimes(2);
+  });
+
+  it("marks an occurrence of a series", () => {
+    const { rerender } = render(<ActivityCard activity={{ ...base, category: "sleep" }} category={cat("Sleep")} onOpen={() => {}} />);
+    expect(screen.queryByTestId("repeat-icon")).not.toBeInTheDocument();
+    rerender(<ActivityCard activity={{ ...base, category: "sleep", seriesId: 3 }} category={cat("Sleep")} onOpen={() => {}} />);
+    expect(screen.getByTestId("repeat-icon")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Sleep: Thing.*repeats$/ })).toBeInTheDocument();
   });
 });

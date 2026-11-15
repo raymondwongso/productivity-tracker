@@ -1,17 +1,38 @@
 "use client";
 
-import type { Activity, Category } from "@productivitytracker/shared";
-import { ArrowRight, Ban, CopyCheck, Trash2, Undo2 } from "lucide-react";
+import type { Activity, Category, EditScope } from "@productivitytracker/shared";
+import { ArrowRight, Ban, CopyCheck, Repeat, Trash2, Undo2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { PrimaryButton } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
-import { draftFromActivity, newDraft, previewLabels, toCreateRequest, toUpdateRequest, validateDraft, type Draft, type DraftErrors } from "../draft";
-import { useCancelActivity, useCreateActivity, useDeleteActivity, useGracePeriods, useRestoreActivity, useUpdateActivity } from "../hooks";
+import {
+  draftFromActivity,
+  newDraft,
+  previewLabels,
+  toCreateRequest,
+  toCreateSeriesRequest,
+  toUpdateRequest,
+  validateDraft,
+  type Draft,
+  type DraftErrors,
+} from "../draft";
+import {
+  useActivitySeries,
+  useCancelActivity,
+  useCreateActivity,
+  useCreateActivitySeries,
+  useDeleteActivity,
+  useGracePeriods,
+  useRestoreActivity,
+  useUpdateActivity,
+} from "../hooks";
 import { NAME_PLACEHOLDERS } from "../meta";
+import { describeRepeat } from "../repeat";
 import { MealItemsEditor, MealTopFields } from "./fields/meal-fields";
 import { GamingTopFields, WatchTopFields, WorkTopFields } from "./fields/reference-fields";
+import { RepeatFields } from "./fields/repeat-fields";
 import { WorkoutItemsEditor, WorkoutTopFields } from "./fields/workout-fields";
 import { LabelChips } from "./label-chip";
 import { RichText } from "./rich-text";
@@ -65,13 +86,18 @@ export function ActivityModal({ target, category, onClose }: Props) {
   const [errors, setErrors] = useState<DraftErrors>({});
   const [serverError, setServerError] = useState("");
   const [armDelete, setArmDelete] = useState(false);
+  /** An occurrence of a series asks which occurrences a save or delete applies to. */
+  const [askScope, setAskScope] = useState<"save" | "delete" | null>(null);
 
   const create = useCreateActivity();
+  const createSeries = useCreateActivitySeries();
   const update = useUpdateActivity();
   const remove = useDeleteActivity();
   const cancel = useCancelActivity();
   const restore = useRestoreActivity();
-  const busy = create.isPending || update.isPending || remove.isPending || cancel.isPending || restore.isPending;
+  const busy = create.isPending || createSeries.isPending || update.isPending || remove.isPending || cancel.isPending || restore.isPending;
+  const inSeries = original !== null && original.seriesId !== null;
+  const { data: series } = useActivitySeries(original?.seriesId ?? null);
 
   const set = (patch: Partial<Draft>) => {
     setDraft((d) => ({ ...d, ...patch }));
@@ -80,14 +106,26 @@ export function ActivityModal({ target, category, onClose }: Props) {
   const labels = previewLabels(draft, original, grace);
   const fail = (e: unknown) => setServerError(e instanceof Error ? e.message : "Something went wrong. Try again.");
 
-  async function save() {
+  async function save(scope?: EditScope) {
     const found = validateDraft(draft);
     setErrors(found);
     if (Object.keys(found).length) return;
+    if (inSeries && !scope) return setAskScope("save");
+    setAskScope(null);
     try {
-      if (original) await update.mutateAsync({ id: original.id, req: toUpdateRequest(draft) });
-      else await create.mutateAsync(toCreateRequest(draft));
-      toast(original ? "Changes saved" : "Activity created");
+      if (original) {
+        await update.mutateAsync({ id: original.id, req: toUpdateRequest(draft), scope });
+        toast(scope === "following" ? "Changes saved to this and following" : "Changes saved");
+      } else {
+        const seriesReq = toCreateSeriesRequest(draft);
+        if (seriesReq) {
+          const res = await createSeries.mutateAsync(seriesReq);
+          toast(`${res.activities.length} ${res.activities.length === 1 ? "activity" : "activities"} created`);
+        } else {
+          await create.mutateAsync(toCreateRequest(draft));
+          toast("Activity created");
+        }
+      }
       onClose();
     } catch (e) {
       fail(e);
@@ -108,12 +146,15 @@ export function ActivityModal({ target, category, onClose }: Props) {
     }
   }
 
-  async function onDelete() {
+  /** A one-off asks twice; an occurrence asks which occurrences, which is the second step. */
+  async function onDelete(scope?: EditScope) {
     if (!original) return;
-    if (!armDelete) return setArmDelete(true);
+    if (inSeries && !scope) return setAskScope("delete");
+    if (!inSeries && !armDelete) return setArmDelete(true);
+    setAskScope(null);
     try {
-      await remove.mutateAsync(original.id);
-      toast("Activity deleted");
+      await remove.mutateAsync({ id: original.id, scope });
+      toast(scope === "following" ? "This and following deleted" : "Activity deleted");
       onClose();
     } catch (e) {
       fail(e);
@@ -136,7 +177,22 @@ export function ActivityModal({ target, category, onClose }: Props) {
     topFields = <GamingTopFields draft={draft} set={set} />;
   }
 
-  const footer = (
+  const scopeFooter = askScope && (
+    <div className="flex w-full flex-wrap items-center gap-2.5" role="group" aria-label={askScope === "save" ? "Save changes to" : "Delete"}>
+      <span className="text-[13px] font-semibold">{askScope === "save" ? "Save changes to" : "Delete"}</span>
+      <button type="button" className={askScope === "delete" ? dangerBtn : lineBtn} disabled={busy} onClick={() => void (askScope === "save" ? save("this") : onDelete("this"))}>
+        This activity
+      </button>
+      <button type="button" className={askScope === "delete" ? dangerBtn : lineBtn} disabled={busy} onClick={() => void (askScope === "save" ? save("following") : onDelete("following"))}>
+        This and following
+      </button>
+      <button type="button" className={`${lineBtn} ml-auto`} onClick={() => setAskScope(null)}>
+        Back
+      </button>
+    </div>
+  );
+
+  const footer = scopeFooter || (
     <>
       <div className="flex flex-wrap gap-2.5">
         {original && (
@@ -182,6 +238,12 @@ export function ActivityModal({ target, category, onClose }: Props) {
           void save();
         }}
       >
+        {inSeries && (
+          <p className="flex items-center gap-1.5 text-[13px] text-ink-soft">
+            <Repeat size={15} aria-hidden="true" />
+            {series ? describeRepeat(series) : "Part of a series"}
+          </p>
+        )}
         <Field label="Name" htmlFor="f-name" error={errors.name}>
           <input id="f-name" autoFocus={!original} className={inputClass} placeholder={`e.g. ${NAME_PLACEHOLDERS[draft.category]}`} value={draft.name} onChange={(e) => set({ name: e.target.value })} />
         </Field>
@@ -228,6 +290,7 @@ export function ActivityModal({ target, category, onClose }: Props) {
             )}
           </div>
         </div>
+        {!original && <RepeatFields draft={draft} set={set} error={errors.repeat} />}
         <div className="flex flex-col gap-1.5">
           <span id="notes-label" className="text-[13px] font-semibold">Notes</span>
           <RichText labelledBy="notes-label" value={draft.notes} onChange={(notes) => set({ notes })} />
