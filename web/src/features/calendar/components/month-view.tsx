@@ -13,15 +13,63 @@ interface Props {
   categories: Map<number, Category>;
   onOpen: (a: Activity) => void;
   onDayClick: (day: Date) => void;
+  /** Phone layout: the whole month fits, each cell is one tap target with category dots. */
+  compact?: boolean;
 }
 
 const MAX_ROWS = 4;
+const MAX_DOTS = 6;
 
 /** Monday-first month grid. Each day lists its activities by start time, then "+N more". */
-export function MonthView({ month, from, to, activities, categories, onOpen, onDayClick }: Props) {
+export function MonthView({ month, from, to, activities, categories, onOpen, onDayClick, compact }: Props) {
   const days: Date[] = [];
   for (let d = from; d < to; d = addDays(d, 1)) days.push(d);
   const today = new Date();
+  const dayActivities = (d: Date) =>
+    activities.filter((a) => sameDay(new Date(a.plannedStart), d)).sort((a, b) => a.plannedStart.localeCompare(b.plannedStart));
+
+  if (compact) {
+    return (
+      <div className="min-h-[288px] flex-1 border-2 border-b-0 border-ink bg-bg">
+        <div className="grid h-full grid-cols-7" style={{ gridTemplateRows: `auto repeat(${days.length / 7}, minmax(0, 1fr))` }}>
+          {DOW.map((d, i) => (
+            <div key={d} className={`border-b-2 border-ink bg-bar py-1.5 text-center text-[10px] font-semibold tracking-[.04em] text-muted uppercase ${i ? "border-l border-l-line" : ""}`}>
+              {d}
+            </div>
+          ))}
+          {days.map((d, i) => {
+            const list = dayActivities(d);
+            const out = d.getMonth() !== month;
+            return (
+              <button
+                key={d.getTime()}
+                type="button"
+                onClick={() => onDayClick(d)}
+                aria-label={`Open ${d.toDateString()}, ${list.length} ${list.length === 1 ? "activity" : "activities"}`}
+                className={`flex min-h-0 min-w-0 flex-col items-start gap-1 overflow-hidden border-b border-line p-1 text-left active:bg-surface-hover ${i % 7 ? "border-l" : ""} ${out ? "bg-bar" : ""}`}
+              >
+                <span className={`px-1 text-[13px] leading-[18px] font-extrabold ${sameDay(d, today) ? "bg-ink text-bg" : out ? "text-muted" : ""}`}>{d.getDate()}</span>
+                {list.length > 0 && (
+                  <span aria-hidden="true" className="flex flex-wrap items-center gap-[3px] px-0.5">
+                    {list.slice(0, MAX_DOTS).map((a) => (
+                      <i
+                        key={a.id}
+                        title={a.name}
+                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${a.cancelledAt ? "bg-line" : "bg-(--cat)"}`}
+                        style={{ "--cat": categories.get(a.categoryId)?.color ?? "#8fb0aa" } as CSSProperties}
+                      />
+                    ))}
+                    {list.length > MAX_DOTS && <span className="text-[10px] leading-none font-semibold text-muted">+{list.length - MAX_DOTS}</span>}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-0 flex-1 overflow-auto border-2 border-b-0 border-ink bg-bg">
       <div className="grid min-w-[784px] grid-cols-[repeat(7,minmax(112px,1fr))]">
@@ -31,7 +79,7 @@ export function MonthView({ month, from, to, activities, categories, onOpen, onD
           </div>
         ))}
         {days.map((d, i) => {
-          const list = activities.filter((a) => sameDay(new Date(a.plannedStart), d)).sort((a, b) => a.plannedStart.localeCompare(b.plannedStart));
+          const list = dayActivities(d);
           const out = d.getMonth() !== month;
           return (
             <div

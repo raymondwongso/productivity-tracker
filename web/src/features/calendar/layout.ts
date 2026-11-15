@@ -92,3 +92,23 @@ export function cardBox(s: Segment, hourHeight: number): CardBox {
     compact: height < 40,
   };
 }
+
+export interface FitBox {
+  /** All four are percent: top and height of the day column, left and width of its width. */
+  top: number;
+  height: number;
+  left: number;
+  width: number;
+}
+
+const DAY_MINUTES = 24 * 60;
+
+/** A segment placed as percentages, for the phone week view where the whole day fits the column. */
+export function fitBox(s: Segment): FitBox {
+  return {
+    top: (s.start / DAY_MINUTES) * 100,
+    height: ((s.end - s.start) / DAY_MINUTES) * 100,
+    left: (s.col / s.cols) * 100,
+    width: 100 / s.cols,
+  };
+}

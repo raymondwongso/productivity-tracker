@@ -1,6 +1,6 @@
 import type { Activity } from "@productivitytracker/shared";
 import { describe, expect, it } from "vitest";
-import { cardBox, segmentsForDay } from "./layout";
+import { cardBox, fitBox, segmentsForDay } from "./layout";
 
 let id = 0;
 const local = (day: number, hhmm: string) => {
@@ -54,5 +54,27 @@ describe("cardBox", () => {
     const box = cardBox(s!, 80);
     expect(box.height).toBe(20);
     expect(box.compact).toBe(true);
+  });
+});
+
+describe("fitBox", () => {
+  it("places a segment as percentages of the whole day", () => {
+    const [s] = segmentsForDay([act(12, "09:00", "10:30")], nov(12));
+    expect(fitBox(s!)).toEqual({ top: 37.5, height: 6.25, left: 0, width: 100 });
+  });
+
+  it("puts overlapping segments side by side", () => {
+    const deep = act(13, "09:00", "12:00");
+    const standup = act(13, "10:30", "11:00");
+    const segs = segmentsForDay([deep, standup], nov(13));
+    expect(segs.map((s) => [fitBox(s).left, fitBox(s).width])).toEqual([[0, 50], [50, 50]]);
+  });
+
+  it("starts the next-day piece of a night at the top", () => {
+    const night = act(14, "23:00", "06:00", 15);
+    const [sat] = segmentsForDay([night], nov(14));
+    const [sun] = segmentsForDay([night], nov(15));
+    expect(fitBox(sat!)).toMatchObject({ top: (23 / 24) * 100, height: (1 / 24) * 100 });
+    expect(fitBox(sun!)).toMatchObject({ top: 0, height: 25 });
   });
 });
