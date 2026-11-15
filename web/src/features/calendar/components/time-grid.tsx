@@ -18,7 +18,7 @@ interface Props {
 
 const HOURS = Array.from({ length: 23 }, (_, i) => i + 1);
 
-function useNow() {
+export function useNow() {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 60_000);

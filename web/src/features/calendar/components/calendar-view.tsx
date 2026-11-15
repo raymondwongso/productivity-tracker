@@ -10,8 +10,10 @@ import { LabelChip } from "@/features/activities/components/label-chip";
 import { useActivities, useCategories } from "@/features/activities/hooks";
 import { LABEL_ORDER } from "@/features/activities/meta";
 import { addDays, parseDateKey, startOfDay, stepAnchor, toDateKey, viewRange, viewTitle, type CalendarView as View } from "@/lib/dates";
+import { NARROW, useMediaQuery } from "@/lib/use-media-query";
 import { MonthView } from "./month-view";
 import { TimeGrid } from "./time-grid";
+import { WeekOverview } from "./week-overview";
 
 const VIEWS: View[] = ["day", "week", "month"];
 const SUBTITLE: Record<View, string> = {
@@ -25,6 +27,9 @@ export function CalendarView() {
   const router = useRouter();
   const pathname = usePathname();
   const view: View = VIEWS.find((v) => v === params.get("view")) ?? "week";
+  // On phones the week and month fit the screen as overviews, and a tap opens the day.
+  const narrow = useMediaQuery(NARROW);
+  const overview = narrow && view === "week";
   const anchor = parseDateKey(params.get("date")) ?? startOfDay(new Date());
   const { from, to } = viewRange(view, anchor);
 
@@ -65,7 +70,7 @@ export function CalendarView() {
       <div className="flex shrink-0 flex-wrap items-end justify-between gap-x-4 gap-y-3">
         <div>
           <h1 className="text-[22px] font-extrabold tracking-[-0.02em] md:text-[26px]">{viewTitle(view, anchor)}</h1>
-          <p className="mt-0.5 text-[13px] text-muted">{SUBTITLE[view]}</p>
+          <p className="mt-0.5 text-[13px] text-muted">{overview ? "Week view · tap a day to open it" : SUBTITLE[view]}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
           <div className="flex border-2 border-ink">
@@ -101,7 +106,7 @@ export function CalendarView() {
             <b className="font-semibold text-ink">{counts.get(l)}</b>
           </span>
         ))}
-        {view !== "month" && <span>· click an empty slot to plan something there</span>}
+        {view !== "month" && !overview && <span>· click an empty slot to plan something there</span>}
       </div>
 
       {isError && (
@@ -111,7 +116,18 @@ export function CalendarView() {
       )}
 
       {view === "month" ? (
-        <MonthView month={anchor.getMonth()} from={from} to={to} activities={activities} categories={categories} onOpen={(a: Activity) => setTarget({ kind: "edit", activity: a })} onDayClick={openDay} />
+        <MonthView
+          month={anchor.getMonth()}
+          from={from}
+          to={to}
+          activities={activities}
+          categories={categories}
+          onOpen={(a: Activity) => setTarget({ kind: "edit", activity: a })}
+          onDayClick={openDay}
+          compact={narrow}
+        />
+      ) : overview ? (
+        <WeekOverview days={Array.from({ length: 7 }, (_, i) => addDays(from, i))} activities={activities} categories={categories} onDayClick={openDay} />
       ) : (
         <TimeGrid
           days={view === "day" ? [from] : Array.from({ length: 7 }, (_, i) => addDays(from, i))}

@@ -90,3 +90,47 @@ describe("CalendarView", () => {
     expect(screen.getAllByRole("button", { name: /^Open / })).toHaveLength(42);
   });
 });
+
+describe("CalendarView on a phone", () => {
+  beforeEach(() => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ media: query, matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fits the week as seven day columns, and a tap anywhere in one (even on an activity) opens that day", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CalendarView />);
+    expect(screen.getByLabelText("Week overview")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Time grid")).not.toBeInTheDocument();
+    expect(screen.getByText("Week view · tap a day to open it")).toBeInTheDocument();
+    expect(screen.queryByText(/click an empty slot/)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /^Open / })).toHaveLength(7);
+    expect(await screen.findByRole("button", { name: "Open Thu Nov 12 2026, 1 activity" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Wed Nov 11 2026, 0 activities" })).toBeInTheDocument();
+
+    await user.click(screen.getByTitle("Act 2 · 13:00–14:00"));
+    expect(push).toHaveBeenLastCalledWith("/calendar?view=day&date=2026-11-12", { scroll: false });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("fits the month as one tap target per day that opens the day", async () => {
+    search = new URLSearchParams("view=month&date=2026-11-14");
+    const user = userEvent.setup();
+    renderWithProviders(<CalendarView />);
+    expect(screen.getAllByRole("button", { name: /^Open / })).toHaveLength(42);
+    const tue = await screen.findByRole("button", { name: "Open Tue Nov 10 2026, 1 activity" });
+    expect(tue.querySelectorAll("i")).toHaveLength(1);
+    await user.click(tue);
+    expect(push).toHaveBeenLastCalledWith("/calendar?view=day&date=2026-11-10", { scroll: false });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("keeps the day view's time grid", () => {
+    search = new URLSearchParams("view=day&date=2026-11-10");
+    renderWithProviders(<CalendarView />);
+    expect(screen.getByLabelText("Time grid")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Week overview")).not.toBeInTheDocument();
+  });
+});
