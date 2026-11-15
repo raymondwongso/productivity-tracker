@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Activity, Category, CategorySlug, Game, GracePeriods, Project, Title } from "@productivitytracker/shared";
+import type { Activity, Category, CategoryFieldsInput, CategorySlug, Game, GracePeriods, Project, Title } from "@productivitytracker/shared";
 import { AppError } from "../errors.js";
 import type { ActivityState, NewActivity } from "../repositories/postgres/activity.repository.js";
 import { CancelActivityService } from "./cancel-activity.service.js";
@@ -13,7 +13,7 @@ import { ListActivitiesService } from "./list-activities.service.js";
 import { RestoreActivityService } from "./restore-activity.service.js";
 import { UpdateActivityService } from "./update-activity.service.js";
 
-const SLUGS: CategorySlug[] = ["sleep", "work", "workout", "meals", "watch", "gaming"];
+const SLUGS: CategorySlug[] = ["sleep", "work", "workout", "meals", "watch", "gaming", "misc"];
 const CATEGORIES: Category[] = SLUGS.map((slug, i) => ({ id: i + 1, slug, name: slug, color: "#000000", sortOrder: i }));
 
 /** In-memory stand-ins for the repositories, shaped like their Pick<> types. */
@@ -57,7 +57,8 @@ function fakes() {
         const g = games.find((x) => x.id === d.gameId);
         return { ...base, category: "gaming", game: g ? { id: g.id, name: g.name } : null };
       }
-      default: return { ...base, category: "sleep" };
+      case "misc": return { ...base, category: "misc" };
+      case "sleep": return { ...base, category: "sleep" };
     }
   };
 
@@ -288,6 +289,23 @@ test("gaming needs one of the user's games, and only gaming takes gameId", async
   assert.deepEqual(kept.category === "gaming" && kept.game, { id: 1, name: "Hades II" });
   const cleared = await f.update.execute(1, g.id, { gameId: null });
   assert.equal(cleared.category === "gaming" && cleared.game, null);
+});
+
+test("misc has no category fields and keeps its category through updates", async () => {
+  const f = fakes();
+  const m = await f.create.execute(1, { category: "misc", ...base, name: "Groceries" });
+  assert.equal(m.category, "misc");
+  assert.deepEqual(m.labels, ["pending"]);
+  const others: CategoryFieldsInput[] = [{ gameId: 1 }, { projectId: 1 }, { titleId: 1 }, { focus: "cardio" }, { totalCalories: 10 }, { items: [] }];
+  for (const field of others) {
+    await rejects(f.create.execute(1, { category: "misc", ...base, ...field }), 400, /does not apply to misc/);
+    await rejects(f.update.execute(1, m.id, field), 400, /does not apply to misc/);
+  }
+  const done = await f.update.execute(1, m.id, { name: "Drive home", actualStart: t("09:00"), actualEnd: t("10:00") });
+  assert.equal(done.category, "misc");
+  assert.equal(done.name, "Drive home");
+  assert.deepEqual(done.labels, ["done"]);
+  await rejects(f.update.execute(1, m.id, { category: "sleep" }), 400, /can't be changed/);
 });
 
 test("create game is get-or-create, case-insensitive, and validates the name", async () => {

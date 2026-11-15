@@ -212,7 +212,9 @@ export function toCreateRequest(d: Draft): CreateActivityRequest {
       return { ...base, category: "watch", titleId: u.titleId };
     case "gaming":
       return { ...base, category: "gaming", gameId: u.gameId };
-    default:
+    case "misc":
+      return { ...base, category: "misc" };
+    case "sleep":
       return { ...base, category: "sleep" };
   }
 }

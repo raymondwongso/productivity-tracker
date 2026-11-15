@@ -1,6 +1,6 @@
 # productivity-tracker
 
-Plan your days in a calendar and record what actually happened. Activities (sleep, work, workouts, meals, things you watch and games you play) have planned and actual times, and each one is labeled automatically: pending, late, premature, overrun, done or cancelled. One activity can carry several labels, for example late and overrun. Tracker pages (Sleep, Fitness, Work, Cinema and Gaming) turn the finished activities in a date range into tiles and charts.
+Plan your days in a calendar and record what actually happened. Activities (sleep, work, workouts, meals, things you watch, games you play, and misc for errands, driving and anything else) have planned and actual times, and each one is labeled automatically: pending, late, premature, overrun, done or cancelled. One activity can carry several labels, for example late and overrun. Tracker pages (Sleep, Fitness, Work, Cinema and Gaming) turn the finished activities in a date range into tiles and charts. Misc has no tracker page and no stats route.
 
 A pnpm monorepo with three packages: a Fastify API (`api/`), a Next.js web app (`web/`), and `shared/`, which holds the types and label rules both use.
 

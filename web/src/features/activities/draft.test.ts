@@ -59,6 +59,18 @@ describe("requests", () => {
     });
   });
 
+  it("builds a misc request with no category fields and a 30-minute default", () => {
+    const d = { ...newDraft("misc", new Date(local("17:00"))), name: " Groceries " };
+    expect(toCreateRequest(d)).toEqual({
+      category: "misc", name: "Groceries", plannedStart: isoOf("17:00"), plannedEnd: isoOf("17:30"), actualStart: null, actualEnd: null, notes: "",
+    });
+  });
+
+  it("keeps a stored misc activity misc", () => {
+    const misc: Activity = { ...stored, category: "misc", categoryId: 7, name: "Drive" };
+    expect(toCreateRequest(draftFromActivity(misc)).category).toBe("misc");
+  });
+
   it("sends items instead of a total when a meal has items", () => {
     const d = draftFromActivity(stored);
     expect(mealTotal(d)).toBe(500);

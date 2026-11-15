@@ -10,6 +10,8 @@ export const VIZ: Record<CategorySlug, string> = {
   meals: "#1aa89a",
   watch: "#9a7fdd",
   gaming: "#d36a97",
+  // Misc has no tracker; the entry only completes the record.
+  misc: "#8ea6ab",
 };
 export const VIZ_LATE = "#d67600";
 export const VIZ_PREMATURE = "#489dc7";
@@ -26,4 +28,5 @@ export const CATEGORY_COLOR: Record<CategorySlug, string> = {
   meals: "#02a193",
   watch: "#9d82e1",
   gaming: "#f78bb8",
+  misc: "#b4c2c6",
 };

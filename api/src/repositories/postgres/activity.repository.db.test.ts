@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import pg from "pg";
 import { loadConfig } from "../../config.js";
+import { CATEGORY_SLUGS } from "../../controllers/activities.controller.js";
 import { CreateActivityService } from "../../services/create-activity.service.js";
 import { UpdateActivityService } from "../../services/update-activity.service.js";
 import { ActivityRepository } from "./activity.repository.js";
@@ -81,8 +82,10 @@ describe("activity repository against a real Postgres", () => {
     const cats = await new CategoryRepository(pool).list();
     assert.deepEqual(cats.map((c) => [c.slug, c.color]), [
       ["sleep", "#9dcffa"], ["work", "#b67747"], ["workout", "#e0d00d"], ["meals", "#02a193"], ["watch", "#9d82e1"],
-      ["gaming", "#f78bb8"],
+      ["gaming", "#f78bb8"], ["misc", "#b4c2c6"],
     ]);
+    // Every seeded category is one the activities route accepts.
+    assert.deepEqual(cats.map((c) => c.slug), CATEGORY_SLUGS);
     assert.deepEqual(await settings.getGracePeriods(), { lateMinutes: 10, prematureMinutes: 15, overrunMinutes: 15 });
   });
 
@@ -124,6 +127,15 @@ describe("activity repository against a real Postgres", () => {
     // A game an activity uses can't be deleted.
     await update.execute(userId, gaming.id, { gameId: game.id });
     await assert.rejects(pool.query("DELETE FROM games WHERE id = $1", [game.id]), (e: unknown) => (e as { code?: string }).code === "23503");
+
+    const misc = await create.execute(userId, { category: "misc", name: "Groceries", ...base, notes: "<p>milk</p>" });
+    assert.equal(misc.category, "misc");
+    assert.deepEqual(misc.labels, ["pending"]);
+    const miscRead = await activities.findByIdForUser(misc.id, userId);
+    assert.equal(miscRead?.category, "misc");
+    const miscDone = await update.execute(userId, misc.id, { actualStart: t("09:00"), actualEnd: t("10:00") });
+    assert.equal(miscDone.category, "misc");
+    assert.deepEqual(miscDone.labels, ["done"]);
 
     // Replacing items rewrites positions; the meal total follows the items.
     const meal2 = await update.execute(userId, meal.id, { items: [{ name: "Soup", calories: 150 }] });
@@ -208,6 +220,8 @@ describe("activity repository against a real Postgres", () => {
     const gaming = await activities.listInRange(userId, from, to, "gaming");
     assert.ok(all.length > gaming.length);
     assert.ok(gaming.length > 0 && gaming.every((a) => a.category === "gaming"));
+    const misc = await activities.listInRange(userId, from, to, "misc");
+    assert.ok(misc.length > 0 && misc.every((a) => a.category === "misc"));
   });
 
   test("stats rows are bucketed by the local date of the planned start in the requested zone", async () => {

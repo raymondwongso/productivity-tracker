@@ -1,5 +1,5 @@
 import type { ActivityLabel, CategorySlug, WorkoutFocus } from "@productivitytracker/shared";
-import { Briefcase, Dumbbell, Film, Gamepad2, Moon, Utensils, type LucideIcon } from "lucide-react";
+import { Briefcase, Dumbbell, Film, Gamepad2, Moon, Shapes, Utensils, type LucideIcon } from "lucide-react";
 
 export const CATEGORY_ICONS: Record<CategorySlug, LucideIcon> = {
   sleep: Moon,
@@ -8,6 +8,7 @@ export const CATEGORY_ICONS: Record<CategorySlug, LucideIcon> = {
   meals: Utensils,
   watch: Film,
   gaming: Gamepad2,
+  misc: Shapes,
 };
 
 export const CATEGORY_HINTS: Record<CategorySlug, string> = {
@@ -17,6 +18,7 @@ export const CATEGORY_HINTS: Record<CategorySlug, string> = {
   meals: "What you ate and calories taken",
   watch: "A movie or an episode of a series",
   gaming: "A session with a game",
+  misc: "Errands, driving and anything else",
 };
 
 export const NAME_PLACEHOLDERS: Record<CategorySlug, string> = {
@@ -26,10 +28,11 @@ export const NAME_PLACEHOLDERS: Record<CategorySlug, string> = {
   meals: "Lunch",
   watch: "Movie night",
   gaming: "Evening session",
+  misc: "Groceries",
 };
 
 /** Default planned length, in minutes, for a new activity. */
-export const DEFAULT_MINUTES: Record<CategorySlug, number> = { sleep: 480, work: 60, workout: 60, meals: 45, watch: 60, gaming: 60 };
+export const DEFAULT_MINUTES: Record<CategorySlug, number> = { sleep: 480, work: 60, workout: 60, meals: 45, watch: 60, gaming: 60, misc: 30 };
 
 export const FOCUS_OPTIONS: { value: WorkoutFocus; label: string }[] = [
   { value: "cardio", label: "Cardio" },

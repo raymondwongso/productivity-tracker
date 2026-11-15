@@ -33,6 +33,7 @@ const FIELDS_BY_CATEGORY: Record<CategorySlug, readonly CategoryFieldKey[]> = {
   work: ["projectId"],
   watch: ["titleId"],
   gaming: ["gameId"],
+  misc: [],
 };
 const ALL_CATEGORY_FIELDS: readonly CategoryFieldKey[] = ["focus", "caloriesBurned", "items", "totalCalories", "projectId", "titleId", "gameId"];
 
@@ -120,6 +121,7 @@ export function mergeDetails(
 ): ActivityDetails {
   switch (category) {
     case "sleep":
+    case "misc":
       return { category };
     case "workout": {
       const p = previous?.category === "workout" ? previous : { focus: null, caloriesBurned: null, items: [] };
@@ -238,7 +240,10 @@ export function stateOf(a: Activity): ActivityState {
     case "gaming":
       details = { category: "gaming", gameId: a.game?.id ?? null };
       break;
-    default:
+    case "misc":
+      details = { category: "misc" };
+      break;
+    case "sleep":
       details = { category: "sleep" };
   }
   return {

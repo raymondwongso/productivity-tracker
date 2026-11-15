@@ -175,6 +175,22 @@ describe("ActivityModal, gaming", () => {
   });
 });
 
+describe("ActivityModal, misc", () => {
+  it("has no category fields and sends only the shared ones", async () => {
+    const user = userEvent.setup();
+    apiPost.mockResolvedValue({ id: 51 });
+    renderWithProviders(<ActivityModal target={{ kind: "new", category: cat("misc", "Misc"), start }} category={cat("misc", "Misc")} onClose={() => {}} />);
+    expect(screen.getByLabelText("Name")).toHaveAttribute("placeholder", "e.g. Groceries");
+    expect(screen.getByLabelText("Planned end")).toHaveValue("2026-11-14T09:30");
+    expect(screen.queryByRole("button", { name: /^(Game|Project|Focus)/ })).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText("Name"), "Supermarket");
+    await user.click(screen.getByRole("button", { name: /Create activity/ }));
+    await waitFor(() => expect(apiPost).toHaveBeenCalledWith("/activities", expect.objectContaining({ category: "misc", name: "Supermarket" })));
+    const body = apiPost.mock.calls[0][1] as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(["actualEnd", "actualStart", "category", "name", "notes", "plannedEnd", "plannedStart"]);
+  });
+});
+
 describe("ActivityModal, existing activity", () => {
   const stored: Activity = {
     id: 5, category: "sleep", categoryId: 1, name: "Night sleep", plannedStart: at("09:00"), plannedEnd: at("10:00"),

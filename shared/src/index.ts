@@ -27,7 +27,7 @@ export interface LoginRequest {
 
 // ---------- reference data ----------
 
-export type CategorySlug = "sleep" | "work" | "workout" | "meals" | "watch" | "gaming";
+export type CategorySlug = "sleep" | "work" | "workout" | "meals" | "watch" | "gaming" | "misc";
 
 export interface Category {
   id: number;
@@ -152,7 +152,12 @@ export interface GamingActivity extends ActivityBase {
   game: Game | null;
 }
 
-export type Activity = SleepActivity | WorkoutActivity | MealActivity | WorkActivity | WatchActivity | GamingActivity;
+/** Anything else: errands, driving. No category fields and no tracker. */
+export interface MiscActivity extends ActivityBase {
+  category: "misc";
+}
+
+export type Activity = SleepActivity | WorkoutActivity | MealActivity | WorkActivity | WatchActivity | GamingActivity | MiscActivity;
 
 /** Fields every category accepts on create. Times are ISO 8601. */
 export interface ActivityFields {
@@ -190,7 +195,8 @@ export type CreateActivityRequest =
   | (ActivityFields & MealFields & { category: "meals" })
   | (ActivityFields & WorkFields & { category: "work" })
   | (ActivityFields & WatchFields & { category: "watch" })
-  | (ActivityFields & GamingFields & { category: "gaming" });
+  | (ActivityFields & GamingFields & { category: "gaming" })
+  | (ActivityFields & { category: "misc" });
 
 /**
  * Partial update. The category cannot change; category fields must match the activity's category.

@@ -17,7 +17,8 @@ export type ActivityDetails =
   | { category: "meals"; totalCalories: number | null; items: MealItem[] }
   | { category: "work"; projectId: number | null }
   | { category: "watch"; titleId: number | null }
-  | { category: "gaming"; gameId: number | null };
+  | { category: "gaming"; gameId: number | null }
+  | { category: "misc" };
 
 /** The full writable state of an activity. Services build it; the repository stores it as-is. */
 export interface ActivityState {
@@ -114,7 +115,9 @@ function toActivity(r: ActivityRow): Activity {
         category: "gaming",
         game: r.game_id !== null && r.game_name !== null ? { id: r.game_id, name: r.game_name } : null,
       };
-    default:
+    case "misc":
+      return { ...base, category: "misc" };
+    case "sleep":
       return { ...base, category: "sleep" };
   }
 }
@@ -225,6 +228,7 @@ export class ActivityRepository {
 async function writeDetails(client: PoolClient, id: number, d: ActivityDetails): Promise<void> {
   switch (d.category) {
     case "sleep":
+    case "misc":
       return;
     case "workout":
       await client.query(

@@ -23,7 +23,7 @@ interface Deps {
 
 const isoTime = { type: "string", format: "date-time" } as const;
 const isoTimeOrNull = { type: ["string", "null"], format: "date-time" } as const;
-export const CATEGORY_SLUGS: readonly CategorySlug[] = ["sleep", "work", "workout", "meals", "watch", "gaming"];
+export const CATEGORY_SLUGS: readonly CategorySlug[] = ["sleep", "work", "workout", "meals", "watch", "gaming", "misc"];
 const caloriesOrNull = { type: ["integer", "null"], minimum: 0, maximum: 100000 } as const;
 
 /** Fields any category may send; the service rejects the ones that don't apply. */

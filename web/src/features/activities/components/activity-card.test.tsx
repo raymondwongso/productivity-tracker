@@ -72,6 +72,12 @@ describe("ActivityCard", () => {
     expect(screen.getByText("No game")).toBeInTheDocument();
   });
 
+  it("misc: planned, actual, notes", () => {
+    const { container } = render(<ActivityCard activity={{ ...base, category: "misc" }} category={cat("Misc")} onOpen={() => {}} />);
+    expect(rowKeys(container)).toEqual(["Planned", "Actual"]);
+    expect(screen.getByText("focus").tagName).toBe("STRONG");
+  });
+
   it("cancelled cards strike the name; compact cards keep only the header", () => {
     const a: Activity = { ...base, category: "sleep", cancelledAt: at("08:00"), labels: ["cancelled"] };
     const { container } = render(<ActivityCard activity={a} category={cat("Sleep")} compact onOpen={() => {}} />);
