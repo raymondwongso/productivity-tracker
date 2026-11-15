@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { CategorySlug, CreateActivityRequest, UpdateActivityRequest } from "@productivitytracker/shared";
+import type { CategorySlug, CreateActivityRequest, EditScope, UpdateActivityRequest } from "@productivitytracker/shared";
 import { authenticate } from "../lib/auth.js";
 import { WORKOUT_FOCUSES } from "../lib/activities.js";
 import type { CancelActivityService } from "../services/cancel-activity.service.js";
@@ -21,13 +21,13 @@ interface Deps {
   restoreActivity: Pick<RestoreActivityService, "execute">;
 }
 
-const isoTime = { type: "string", format: "date-time" } as const;
+export const isoTime = { type: "string", format: "date-time" } as const;
 const isoTimeOrNull = { type: ["string", "null"], format: "date-time" } as const;
 export const CATEGORY_SLUGS: readonly CategorySlug[] = ["sleep", "work", "workout", "meals", "watch", "gaming", "misc"];
 const caloriesOrNull = { type: ["integer", "null"], minimum: 0, maximum: 100000 } as const;
 
 /** Fields any category may send; the service rejects the ones that don't apply. */
-const activityProperties = {
+export const activityProperties = {
   name: str(200),
   plannedStart: isoTime,
   plannedEnd: isoTime,
@@ -54,6 +54,13 @@ const activityProperties = {
       },
     },
   },
+} as const;
+
+/** `?scope=this|following` on an edit or delete; "this" when left out. */
+const scopeQuery = {
+  type: "object",
+  properties: { scope: { type: "string", enum: ["this", "following"] } },
+  additionalProperties: false,
 } as const;
 
 export function activitiesController(d: Deps) {
@@ -93,22 +100,27 @@ export function activitiesController(d: Deps) {
       async (request, reply) => reply.code(201).send(await d.createActivity.execute(request.user.id, request.body)),
     );
 
-    app.patch<{ Params: { id: number }; Body: UpdateActivityRequest & { category?: string } }>(
+    app.patch<{ Params: { id: number }; Querystring: { scope?: EditScope }; Body: UpdateActivityRequest & { category?: string } }>(
       "/activities/:id",
       {
         schema: {
           params: idParams,
+          querystring: scopeQuery,
           // `category` is accepted here only so the service can refuse a change with a clear message.
           body: { type: "object", properties: { category: { type: "string" }, ...activityProperties } },
         },
       },
-      async (request) => d.updateActivity.execute(request.user.id, request.params.id, request.body),
+      async (request) => d.updateActivity.execute(request.user.id, request.params.id, request.body, request.query.scope ?? "this"),
     );
 
-    app.delete<{ Params: { id: number } }>("/activities/:id", { schema: { params: idParams } }, async (request, reply) => {
-      await d.deleteActivity.execute(request.user.id, request.params.id);
-      return reply.code(204).send();
-    });
+    app.delete<{ Params: { id: number }; Querystring: { scope?: EditScope } }>(
+      "/activities/:id",
+      { schema: { params: idParams, querystring: scopeQuery } },
+      async (request, reply) => {
+        await d.deleteActivity.execute(request.user.id, request.params.id, request.query.scope ?? "this");
+        return reply.code(204).send();
+      },
+    );
 
     app.post<{ Params: { id: number } }>("/activities/:id/cancel", { schema: { params: idParams } }, async (request) =>
       d.cancelActivity.execute(request.user.id, request.params.id),

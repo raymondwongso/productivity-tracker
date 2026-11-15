@@ -9,7 +9,7 @@ Rules for AI agents and contributors. Read the README for setup and structure.
 - Anything both sides need (request/response shapes, DTOs, enums) lives in `shared/`.
 - When an API contract changes, update `shared/` first, then `api/`, then `web/`.
 - `shared/` is the `@productivitytracker/shared` pnpm workspace package. Run `make shared-build` after changing it.
-- `shared/` holds types, plus pure, dependency-free functions that both sides must agree on. Today that is only `computeLabels`: the API stores its result and the activity modal previews it live. Anything with I/O or a dependency stays out of `shared/`.
+- `shared/` holds types, plus pure, dependency-free functions that both sides must agree on. Today that is `computeLabels` (the API stores its result and the activity modal previews it live) and the repeat rules `occurrenceDates` / `checkRepeatRule` (the API creates exactly those dates and the modal previews them). Anything with I/O or a dependency stays out of `shared/`.
 
 ## Types
 

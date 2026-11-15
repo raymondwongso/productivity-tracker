@@ -258,3 +258,39 @@ export function stateOf(a: Activity): ActivityState {
     details,
   };
 }
+
+const differs = (a: unknown, b: unknown) => JSON.stringify(a) !== JSON.stringify(b);
+
+/**
+ * The category fields that differ between two detail states of the same category, shaped as
+ * request input. Used to carry an edit of "this and following" to the later occurrences:
+ * only what changed on the edited occurrence is copied.
+ */
+export function changedCategoryFields(prev: ActivityDetails, next: ActivityDetails): CategoryFieldsInput {
+  switch (next.category) {
+    case "workout": {
+      const p = prev.category === "workout" ? prev : null;
+      return {
+        ...(differs(p?.focus, next.focus) ? { focus: next.focus } : {}),
+        ...(differs(p?.caloriesBurned, next.caloriesBurned) ? { caloriesBurned: next.caloriesBurned } : {}),
+        ...(differs(p?.items, next.items) ? { items: next.items } : {}),
+      };
+    }
+    case "meals": {
+      const p = prev.category === "meals" ? prev : null;
+      return {
+        ...(differs(p?.totalCalories, next.totalCalories) ? { totalCalories: next.totalCalories } : {}),
+        ...(differs(p?.items, next.items) ? { items: next.items } : {}),
+      };
+    }
+    case "work":
+      return differs(prev.category === "work" ? prev.projectId : undefined, next.projectId) ? { projectId: next.projectId } : {};
+    case "watch":
+      return differs(prev.category === "watch" ? prev.titleId : undefined, next.titleId) ? { titleId: next.titleId } : {};
+    case "gaming":
+      return differs(prev.category === "gaming" ? prev.gameId : undefined, next.gameId) ? { gameId: next.gameId } : {};
+    case "sleep":
+    case "misc":
+      return {};
+  }
+}

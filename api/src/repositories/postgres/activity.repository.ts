@@ -9,6 +9,7 @@ import type {
   WorkoutFocus,
   WorkoutItem,
 } from "@productivitytracker/shared";
+import { withTransaction } from "./pool.js";
 
 /** Category-specific state, written to the matching detail table. */
 export type ActivityDetails =
@@ -36,6 +37,8 @@ export interface ActivityState {
 export interface NewActivity extends ActivityState {
   userId: number;
   categoryId: number;
+  /** The series it is an occurrence of; null for a one-off. */
+  seriesId: number | null;
 }
 
 interface ActivityRow {
@@ -50,6 +53,7 @@ interface ActivityRow {
   notes: string;
   cancelled_at: Date | null;
   labels: ActivityLabel[];
+  series_id: number | null;
   created_at: Date;
   updated_at: Date;
   focus: WorkoutFocus | null;
@@ -80,6 +84,7 @@ function toActivity(r: ActivityRow): Activity {
     notes: r.notes,
     cancelledAt: iso(r.cancelled_at),
     labels: r.labels,
+    seriesId: r.series_id,
     createdAt: r.created_at.toISOString(),
     updatedAt: r.updated_at.toISOString(),
   };
@@ -124,7 +129,7 @@ function toActivity(r: ActivityRow): Activity {
 
 const SELECT = `
   SELECT a.id, a.category_id, c.slug AS category, a.name, a.planned_start, a.planned_end,
-         a.actual_start, a.actual_end, a.notes, a.cancelled_at, a.labels, a.created_at, a.updated_at,
+         a.actual_start, a.actual_end, a.notes, a.cancelled_at, a.labels, a.series_id, a.created_at, a.updated_at,
          wd.focus, wd.calories_burned, md.total_calories,
          wk.project_id, p.name AS project_name,
          wt.title_id, t.name AS title_name, t.kind AS title_kind,
@@ -170,36 +175,43 @@ export class ActivityRepository {
     return rows[0] ? toActivity(rows[0]) : null;
   }
 
+  /** Occurrences of a series planned to start at or after `from`, in order. */
+  async listFollowing(seriesId: number, userId: number, from: Date): Promise<Activity[]> {
+    const { rows } = await this.pool.query<ActivityRow>(
+      `${SELECT} WHERE a.series_id = $1 AND a.user_id = $2 AND a.planned_start >= $3 ORDER BY a.planned_start, a.id`,
+      [seriesId, userId, from],
+    );
+    return rows.map(toActivity);
+  }
+
   async create(a: NewActivity): Promise<Activity> {
-    const id = await this.transaction(async (client) => {
-      const { rows } = await client.query<{ id: number }>(
-        `INSERT INTO activities (user_id, category_id, name, planned_start, planned_end, actual_start, actual_end,
-                                 notes, cancelled_at, labels)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
-        [a.userId, a.categoryId, a.name, a.plannedStart, a.plannedEnd, a.actualStart, a.actualEnd, a.notes, a.cancelledAt, a.labels],
-      );
-      const newId = rows[0]!.id;
-      await writeDetails(client, newId, a.details);
-      return newId;
-    });
+    const id = await this.transaction((client) => insertActivity(client, a));
     return (await this.findByIdForUser(id, a.userId))!;
   }
 
   /** Replaces the activity's state. Returns null when the user has no such activity. */
   async update(id: number, userId: number, s: ActivityState): Promise<Activity | null> {
-    const found = await this.transaction(async (client) => {
-      const { rowCount } = await client.query(
-        `UPDATE activities
-         SET name = $3, planned_start = $4, planned_end = $5, actual_start = $6, actual_end = $7,
-             notes = $8, cancelled_at = $9, labels = $10, updated_at = now()
-         WHERE id = $1 AND user_id = $2`,
-        [id, userId, s.name, s.plannedStart, s.plannedEnd, s.actualStart, s.actualEnd, s.notes, s.cancelledAt, s.labels],
-      );
-      if (!rowCount) return false;
-      await writeDetails(client, id, s.details);
-      return true;
-    });
+    const found = await this.transaction((client) => updateActivity(client, id, userId, s));
     return found ? this.findByIdForUser(id, userId) : null;
+  }
+
+  /**
+   * Replaces the state of several activities in one transaction (an edit of "this and following").
+   * Returns them in the given order, or null, with nothing written, when any is missing.
+   */
+  async updateMany(userId: number, updates: { id: number; state: ActivityState }[]): Promise<Activity[] | null> {
+    const all = await this.transaction(async (client) => {
+      for (const u of updates) {
+        if (!(await updateActivity(client, u.id, userId, u.state))) throw new MissingRow();
+      }
+      return true;
+    }).catch((err: unknown) => {
+      if (err instanceof MissingRow) return false;
+      throw err;
+    });
+    if (!all) return null;
+    const saved = await Promise.all(updates.map((u) => this.findByIdForUser(u.id, userId)));
+    return saved.every((a) => a !== null) ? saved.filter((a): a is Activity => a !== null) : null;
   }
 
   /** Deletes the activity with its detail and item rows (cascade). Returns false when none matched. */
@@ -208,20 +220,38 @@ export class ActivityRepository {
     return (rowCount ?? 0) > 0;
   }
 
-  private async transaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      const result = await fn(client);
-      await client.query("COMMIT");
-      return result;
-    } catch (err) {
-      await client.query("ROLLBACK");
-      throw err;
-    } finally {
-      client.release();
-    }
+  private transaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+    return withTransaction(this.pool, fn);
   }
+}
+
+/** Thrown inside a transaction to roll it back when a row to update is gone. */
+class MissingRow extends Error {}
+
+/** Inserts the activity and its detail rows on `client` (inside the caller's transaction). */
+export async function insertActivity(client: PoolClient, a: NewActivity): Promise<number> {
+  const { rows } = await client.query<{ id: number }>(
+    `INSERT INTO activities (user_id, category_id, name, planned_start, planned_end, actual_start, actual_end,
+                             notes, cancelled_at, labels, series_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+    [a.userId, a.categoryId, a.name, a.plannedStart, a.plannedEnd, a.actualStart, a.actualEnd, a.notes, a.cancelledAt, a.labels, a.seriesId],
+  );
+  const id = rows[0]!.id;
+  await writeDetails(client, id, a.details);
+  return id;
+}
+
+async function updateActivity(client: PoolClient, id: number, userId: number, s: ActivityState): Promise<boolean> {
+  const { rowCount } = await client.query(
+    `UPDATE activities
+     SET name = $3, planned_start = $4, planned_end = $5, actual_start = $6, actual_end = $7,
+         notes = $8, cancelled_at = $9, labels = $10, updated_at = now()
+     WHERE id = $1 AND user_id = $2`,
+    [id, userId, s.name, s.plannedStart, s.plannedEnd, s.actualStart, s.actualEnd, s.notes, s.cancelledAt, s.labels],
+  );
+  if (!rowCount) return false;
+  await writeDetails(client, id, s.details);
+  return true;
 }
 
 /** Upserts the detail row and replaces the item rows (positions 0…n). */

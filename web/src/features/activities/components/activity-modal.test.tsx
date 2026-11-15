@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import type { Activity, Category } from "@productivitytracker/shared";
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api-client";
@@ -194,7 +194,7 @@ describe("ActivityModal, misc", () => {
 describe("ActivityModal, existing activity", () => {
   const stored: Activity = {
     id: 5, category: "sleep", categoryId: 1, name: "Night sleep", plannedStart: at("09:00"), plannedEnd: at("10:00"),
-    actualStart: at("09:12"), actualEnd: at("10:00"), notes: "", cancelledAt: null, labels: ["late"], createdAt: "", updatedAt: "",
+    actualStart: at("09:12"), actualEnd: at("10:00"), notes: "", cancelledAt: null, labels: ["late"], seriesId: null, createdAt: "", updatedAt: "",
   };
 
   it("patches changes and keeps the stored labels when no time changed", async () => {
@@ -226,6 +226,100 @@ describe("ActivityModal, existing activity", () => {
     expect(apiDelete).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Click again to delete" }));
     await waitFor(() => expect(apiDelete).toHaveBeenCalledWith("/activities/5"));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+});
+
+describe("ActivityModal, recurring activities", () => {
+  it("creates a weekly series and previews how many activities it makes", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    apiPost.mockResolvedValue({ series: { id: 3 }, activities: [{ id: 1 }, { id: 2 }, { id: 3 }] });
+    renderWithProviders(<ActivityModal target={{ kind: "new", category: cat("workout", "Workout"), start }} category={cat("workout", "Workout")} onClose={onClose} />);
+    await user.type(screen.getByLabelText("Name"), "Gym");
+    expect(screen.getByRole("button", { name: "Doesn't repeat" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "Weekly" }));
+    // 14 Nov 2026 is a Saturday: weekly starts on Saturdays.
+    expect(screen.getByRole("button", { name: "Sat" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "Sun" }));
+    const until = screen.getByLabelText("Ends on");
+    expect(until).toHaveAttribute("max", "2026-12-14");
+    await user.clear(until);
+    await user.type(until, "2026-11-22");
+    expect(screen.getByText(/Creates 4 activities · Sat, Nov 14 → Sun, Nov 22/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Create activity/ }));
+    await waitFor(() => expect(apiPost).toHaveBeenCalledWith("/activity-series", expect.objectContaining({
+      category: "workout", name: "Gym", plannedStart: start.toISOString(),
+      repeat: expect.objectContaining({ frequency: "weekly", every: 1, weekdays: [6, 7], until: "2026-11-22" }),
+    })));
+    expect(await screen.findByText("3 activities created")).toBeInTheDocument();
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("refuses a series longer than a month before sending", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ActivityModal target={{ kind: "new", category: cat("misc", "Misc"), start }} category={cat("misc", "Misc")} onClose={() => {}} />);
+    await user.type(screen.getByLabelText("Name"), "Groceries");
+    await user.click(screen.getByRole("button", { name: "Daily" }));
+    const until = screen.getByLabelText("Ends on");
+    await user.clear(until);
+    await user.type(until, "2026-12-20");
+    await user.click(screen.getByRole("button", { name: /Create activity/ }));
+    expect(screen.getByText("A series can run for at most one month.")).toBeInTheDocument();
+    expect(apiPost).not.toHaveBeenCalled();
+  });
+
+  const occurrence: Activity = {
+    id: 8, category: "misc", categoryId: 7, name: "Errands", plannedStart: at("09:00"), plannedEnd: at("10:00"),
+    actualStart: null, actualEnd: null, notes: "", cancelledAt: null, labels: ["pending"], seriesId: 3, createdAt: "", updatedAt: "",
+  };
+  const seriesApi = async (p: string) => {
+    if (p === "/activity-series/3") {
+      return { id: 3, categoryId: 7, frequency: "weekly", every: 1, weekdays: [1, 6], until: "2026-12-07", startsOn: "2026-11-14", timeZone: "UTC", occurrences: 7 };
+    }
+    return p.startsWith("/settings") ? GRACE : [];
+  };
+
+  it("describes the series and asks which occurrences a save applies to", async () => {
+    const user = userEvent.setup();
+    apiGet.mockImplementation(seriesApi);
+    apiPatch.mockResolvedValue(occurrence);
+    const onClose = vi.fn();
+    renderWithProviders(<ActivityModal target={{ kind: "edit", activity: occurrence }} category={cat("misc", "Misc")} onClose={onClose} />);
+    expect(await screen.findByText("Repeats every week on Mon, Sat until Mon, Dec 7")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Repeat" })).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText("Name"), " run");
+    await user.click(screen.getByRole("button", { name: /Save changes/ }));
+    expect(apiPatch).not.toHaveBeenCalled();
+    await user.click(within(screen.getByRole("group", { name: "Save changes to" })).getByRole("button", { name: "This and following" }));
+    await waitFor(() => expect(apiPatch).toHaveBeenCalledWith("/activities/8?scope=following", expect.objectContaining({ name: "Errands run" })));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("saves one occurrence alone without a scope, and can go back", async () => {
+    const user = userEvent.setup();
+    apiGet.mockImplementation(seriesApi);
+    apiPatch.mockResolvedValue(occurrence);
+    renderWithProviders(<ActivityModal target={{ kind: "edit", activity: occurrence }} category={cat("misc", "Misc")} onClose={() => {}} />);
+    await user.click(screen.getByRole("button", { name: /Save changes/ }));
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByRole("button", { name: /Save changes/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Save changes/ }));
+    await user.click(screen.getByRole("button", { name: "This activity" }));
+    await waitFor(() => expect(apiPatch).toHaveBeenCalledWith("/activities/8", expect.anything()));
+  });
+
+  it("deletes this and following after choosing the scope", async () => {
+    const user = userEvent.setup();
+    apiGet.mockImplementation(seriesApi);
+    apiDelete.mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    renderWithProviders(<ActivityModal target={{ kind: "edit", activity: occurrence }} category={cat("misc", "Misc")} onClose={onClose} />);
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    expect(apiDelete).not.toHaveBeenCalled();
+    await user.click(within(screen.getByRole("group", { name: "Delete" })).getByRole("button", { name: "This and following" }));
+    await waitFor(() => expect(apiDelete).toHaveBeenCalledWith("/activities/8?scope=following"));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 });

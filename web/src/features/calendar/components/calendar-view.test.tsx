@@ -26,7 +26,7 @@ const local = (d: number, hhmm: string) => {
 };
 const activity = (id: number, day: number, s: string, e: string, labels: Activity["labels"]): Activity => ({
   id, category: "sleep", categoryId: 1, name: `Act ${id}`, plannedStart: local(day, s), plannedEnd: local(day, e),
-  actualStart: null, actualEnd: null, notes: "", cancelledAt: null, labels, createdAt: "", updatedAt: "",
+  actualStart: null, actualEnd: null, notes: "", cancelledAt: null, labels, seriesId: null, createdAt: "", updatedAt: "",
 });
 
 beforeEach(() => {

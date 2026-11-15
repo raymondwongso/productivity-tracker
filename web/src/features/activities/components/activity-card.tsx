@@ -1,4 +1,5 @@
 import type { Activity, Category } from "@productivitytracker/shared";
+import { Repeat } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { formatHm } from "@/lib/dates";
 import { focusLabel } from "../meta";
@@ -134,7 +135,7 @@ export function ActivityCard({ activity: a, category, compact, continued, style,
     <div
       role="button"
       tabIndex={0}
-      aria-label={`${category?.name ?? a.category}: ${a.name}, ${time(a.plannedStart)} to ${time(a.plannedEnd)}, ${a.labels.join(", ") || "in progress"}`}
+      aria-label={`${category?.name ?? a.category}: ${a.name}, ${time(a.plannedStart)} to ${time(a.plannedEnd)}, ${a.labels.join(", ") || "in progress"}${a.seriesId !== null ? ", repeats" : ""}`}
       onClick={() => onOpen(a)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -153,6 +154,7 @@ export function ActivityCard({ activity: a, category, compact, continued, style,
           {continued ? "↳ " : ""}
           {a.name}
         </span>
+        {a.seriesId !== null && <Repeat size={11} strokeWidth={2.5} aria-hidden="true" data-testid="repeat-icon" className="shrink-0 self-center" />}
         {compact && <span className="ml-auto text-[11px] font-semibold">{time(a.plannedStart)}</span>}
       </div>
       {!compact && <div className="flex min-h-0 flex-1 flex-col pt-[3px]">{rows}</div>}

@@ -28,6 +28,7 @@ export class CreateActivityService {
       ...fields,
       userId,
       categoryId: category.id,
+      seriesId: null,
       cancelledAt: null,
       labels: labelsFor({ ...fields, cancelledAt: null }, grace),
       details,

@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Activity, Category, CategoryFieldsInput, CategorySlug, Game, GracePeriods, Project, Title } from "@productivitytracker/shared";
+import type { Activity, ActivitySeries, Category, CategoryFieldsInput, CategorySlug, Game, GracePeriods, Project, Title } from "@productivitytracker/shared";
 import { AppError } from "../errors.js";
+import type { NewSeries } from "../repositories/postgres/activity-series.repository.js";
 import type { ActivityState, NewActivity } from "../repositories/postgres/activity.repository.js";
 import { CancelActivityService } from "./cancel-activity.service.js";
+import { CreateActivitySeriesService } from "./create-activity-series.service.js";
 import { CreateActivityService } from "./create-activity.service.js";
 import { CreateGameService } from "./create-game.service.js";
 import { CreateProjectService } from "./create-project.service.js";
 import { DeleteActivityService } from "./delete-activity.service.js";
+import { GetActivitySeriesService } from "./get-activity-series.service.js";
 import { GetActivityService } from "./get-activity.service.js";
 import { ListActivitiesService } from "./list-activities.service.js";
 import { RestoreActivityService } from "./restore-activity.service.js";
@@ -29,7 +32,7 @@ function fakes() {
     { id: 1, userId: 1, name: "Hades II" },
     { id: 2, userId: 2, name: "Someone else's game" },
   ];
-  const rows = new Map<number, { userId: number; categoryId: number; state: ActivityState; updates: number }>();
+  const rows = new Map<number, { userId: number; categoryId: number; seriesId: number | null; state: ActivityState; updates: number }>();
   let nextId = 1;
 
   const toActivity = (id: number): Activity => {
@@ -39,7 +42,7 @@ function fakes() {
     const base = {
       id, categoryId: r.categoryId, name: s.name, plannedStart: s.plannedStart.toISOString(), plannedEnd: s.plannedEnd.toISOString(),
       actualStart: iso(s.actualStart), actualEnd: iso(s.actualEnd), notes: s.notes, cancelledAt: iso(s.cancelledAt),
-      labels: s.labels, createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z",
+      labels: s.labels, seriesId: r.seriesId, createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z",
     };
     const d = s.details;
     switch (d.category) {
@@ -66,8 +69,8 @@ function fakes() {
     rows,
     async create(a: NewActivity) {
       const id = nextId++;
-      const { userId, categoryId, ...state } = a;
-      rows.set(id, { userId, categoryId, state, updates: 0 });
+      const { userId, categoryId, seriesId, ...state } = a;
+      rows.set(id, { userId, categoryId, seriesId, state, updates: 0 });
       return toActivity(id);
     },
     async findByIdForUser(id: number, userId: number) {
@@ -87,6 +90,16 @@ function fakes() {
       rows.delete(id);
       return true;
     },
+    async listFollowing(seriesId: number, userId: number, from: Date) {
+      return [...rows.entries()]
+        .filter(([, r]) => r.seriesId === seriesId && r.userId === userId && r.state.plannedStart >= from)
+        .sort(([, a], [, b]) => a.state.plannedStart.getTime() - b.state.plannedStart.getTime())
+        .map(([id]) => toActivity(id));
+    },
+    async updateMany(userId: number, updates: { id: number; state: ActivityState }[]) {
+      if (updates.some((u) => rows.get(u.id)?.userId !== userId)) return null;
+      return Promise.all(updates.map(async (u) => (await this.update(u.id, userId, u.state))!));
+    },
     calls: [] as { from: Date; to: Date; category: CategorySlug | null }[],
     async listInRange(_userId: number, from: Date, to: Date, category: CategorySlug | null = null) {
       this.calls.push({ from, to, category });
@@ -98,12 +111,56 @@ function fakes() {
     titles: { findByIdForUser: async (id: number, userId: number) => titles.find((t) => t.id === id && t.userId === userId) ?? null },
     games: { findByIdForUser: async (id: number, userId: number) => games.find((g) => g.id === id && g.userId === userId) ?? null },
   };
+  const seriesRows = new Map<number, NewSeries>();
+  let nextSeriesId = 1;
+  const seriesOf = (id: number): ActivitySeries => {
+    const s = seriesRows.get(id)!;
+    const occurrences = [...rows.values()].filter((r) => r.seriesId === id).length;
+    return { id, categoryId: s.categoryId, frequency: s.frequency, every: s.every, weekdays: s.weekdays, startsOn: s.startsOn, until: s.until, timeZone: s.timeZone, occurrences };
+  };
+  const series = {
+    rows: seriesRows,
+    async create(s: NewSeries, occurrences: Omit<NewActivity, "seriesId">[]) {
+      const id = nextSeriesId++;
+      seriesRows.set(id, s);
+      for (const o of occurrences) await activities.create({ ...o, seriesId: id });
+      return seriesOf(id);
+    },
+    async findByIdForUser(id: number, userId: number) {
+      return seriesRows.get(id)?.userId === userId ? seriesOf(id) : null;
+    },
+    /** Mirrors the SQL: deletes from `from` on and ends the series the day before (UTC dates here). */
+    async deleteFollowing(seriesId: number, userId: number, from: Date) {
+      let n = 0;
+      for (const [id, r] of rows) {
+        if (r.seriesId === seriesId && r.userId === userId && r.state.plannedStart >= from) {
+          rows.delete(id);
+          n++;
+        }
+      }
+      const s = seriesRows.get(seriesId);
+      if (s) {
+        const dayBefore = new Date(from.getTime() - 24 * 60 * 60_000).toISOString().slice(0, 10);
+        // GREATEST(starts_on, LEAST(ends_on, day before)); YYYY-MM-DD strings compare as dates
+        const earlier = dayBefore < s.until ? dayBefore : s.until;
+        s.until = earlier > s.startsOn ? earlier : s.startsOn;
+      }
+      await this.deleteIfEmpty(seriesId, userId);
+      return n;
+    },
+    async deleteIfEmpty(seriesId: number, userId: number) {
+      if (seriesRows.get(seriesId)?.userId === userId && ![...rows.values()].some((r) => r.seriesId === seriesId)) seriesRows.delete(seriesId);
+    },
+  };
   const settings = { getGracePeriods: async () => ({ ...grace }) };
   const categories = { findBySlug: async (slug: string) => CATEGORIES.find((c) => c.slug === slug) ?? null };
   return {
-    grace, activities, refs, settings, projects,
+    grace, activities, series, refs, settings, projects,
     create: new CreateActivityService(categories, settings, refs, activities),
-    update: new UpdateActivityService(settings, refs, activities),
+    update: new UpdateActivityService(settings, refs, activities, series),
+    remove: new DeleteActivityService(activities, series),
+    createSeries: new CreateActivitySeriesService(categories, settings, refs, series, activities),
+    getSeries: new GetActivitySeriesService(series),
   };
 }
 
@@ -251,8 +308,8 @@ test("other users' activities are not found", async () => {
   await rejects(new GetActivityService(f.activities).execute(2, a.id), 404);
   await rejects(f.update.execute(2, a.id, { name: "x" }), 404);
   await rejects(new CancelActivityService(f.activities).execute(2, a.id), 404);
-  await rejects(new DeleteActivityService(f.activities).execute(2, a.id), 404);
-  await new DeleteActivityService(f.activities).execute(1, a.id);
+  await rejects(f.remove.execute(2, a.id), 404);
+  await f.remove.execute(1, a.id);
   assert.equal(f.activities.rows.size, 0);
 });
 
@@ -339,4 +396,127 @@ test("create project is get-or-create, case-insensitive", async () => {
   assert.equal((await svc.execute(1, { name: " website " })).id, 1);
   assert.equal((await svc.execute(1, { name: "Garden" })).id, 2);
   await rejects(svc.execute(1, { name: " " }), 400);
+});
+
+// ---------- recurring activities (series) ----------
+
+const day = (d: number, hhmm: string) => `2026-11-${d}T${hhmm}:00.000Z`;
+const gym = {
+  category: "workout" as const, name: "Gym", plannedStart: day(16, "07:00"), plannedEnd: day(16, "08:00"), focus: "strength" as const,
+};
+const weeklyMwf = { frequency: "weekly" as const, every: 1, weekdays: [5, 1, 3] as (1 | 3 | 5)[], until: "2026-11-27", timeZone: "UTC" };
+const dailyTo20 = { frequency: "daily" as const, every: 1, weekdays: null, until: "2026-11-20", timeZone: "UTC" };
+
+test("a series creates every occurrence up front; only the first keeps its actual times", async () => {
+  const f = fakes();
+  const { series, activities } = await f.createSeries.execute(1, {
+    ...gym, actualStart: day(16, "07:05"), actualEnd: day(16, "08:00"), repeat: weeklyMwf,
+  });
+  assert.deepEqual(series.weekdays, [1, 3, 5]);
+  assert.equal(series.startsOn, "2026-11-16");
+  assert.equal(series.occurrences, 6);
+  assert.deepEqual(activities.map((a) => a.plannedStart), [
+    day(16, "07:00"), day(18, "07:00"), day(20, "07:00"), day(23, "07:00"), day(25, "07:00"), day(27, "07:00"),
+  ]);
+  assert.ok(activities.every((a) => a.seriesId === series.id && a.name === "Gym" && a.category === "workout" && a.focus === "strength"));
+  assert.deepEqual(activities[0]!.labels, ["done"]);
+  assert.ok(activities.slice(1).every((a) => a.actualStart === null && a.labels.join() === "pending"));
+});
+
+test("a series is validated as a whole, and nothing is created when it is refused", async () => {
+  const f = fakes();
+  await rejects(f.createSeries.execute(1, { ...gym, repeat: { ...weeklyMwf, weekdays: [2] } }), 400, /first occurrence/);
+  await rejects(f.createSeries.execute(1, { ...gym, repeat: { ...weeklyMwf, until: "2026-12-17" } }), 400, /one month/);
+  await rejects(f.createSeries.execute(1, { ...gym, repeat: { ...weeklyMwf, timeZone: "Mars/Olympus" } }), 400, /time zone/);
+  await rejects(f.createSeries.execute(1, { ...gym, name: " ", repeat: weeklyMwf }), 400, /Name/);
+  await rejects(f.createSeries.execute(1, { category: "work", ...base, projectId: 2, repeat: dailyTo20 }), 400, /ongoing/);
+  assert.equal(f.activities.rows.size, 0);
+  assert.equal(f.series.rows.size, 0);
+});
+
+test("occurrences keep their local time in the series' zone across a DST change", async () => {
+  const f = fakes();
+  // 07:00 in Berlin, 23 → 27 Oct 2026; summer time ends on the 25th.
+  const { activities } = await f.createSeries.execute(1, {
+    category: "sleep", name: "Wake", plannedStart: "2026-10-23T05:00:00.000Z", plannedEnd: "2026-10-23T06:00:00.000Z",
+    repeat: { ...dailyTo20, until: "2026-10-27", timeZone: "Europe/Berlin" },
+  });
+  assert.deepEqual(activities.map((a) => a.plannedStart.slice(0, 16)), [
+    "2026-10-23T05:00", "2026-10-24T05:00", "2026-10-25T06:00", "2026-10-26T06:00", "2026-10-27T06:00",
+  ]);
+});
+
+test("a series can be read by its owner only", async () => {
+  const f = fakes();
+  const { series } = await f.createSeries.execute(1, { ...gym, repeat: weeklyMwf });
+  assert.equal((await f.getSeries.execute(1, series.id)).occurrences, 6);
+  await rejects(f.getSeries.execute(2, series.id), 404);
+});
+
+test("editing this and following moves the later occurrences and leaves earlier ones alone", async () => {
+  const f = fakes();
+  const { activities: [a1, a2, a3, a4, a5] } = await f.createSeries.execute(1, {
+    category: "misc", name: "Errands", plannedStart: day(16, "09:00"), plannedEnd: day(16, "10:00"), repeat: dailyTo20,
+  });
+  const edited = await f.update.execute(1, a3!.id, {
+    name: "Late errands", plannedStart: day(18, "10:00"), plannedEnd: day(18, "11:30"), actualStart: day(18, "10:00"),
+  }, "following");
+  assert.equal(edited.id, a3!.id);
+  assert.deepEqual(edited.labels, []); // started on time, not finished
+  for (const a of [a1!, a2!]) {
+    const still = await f.activities.findByIdForUser(a.id, 1);
+    assert.equal(still!.name, "Errands");
+    assert.equal(still!.plannedStart, a.plannedStart);
+  }
+  const [b4, b5] = await Promise.all([a4!, a5!].map((a) => f.activities.findByIdForUser(a.id, 1)));
+  assert.equal(b4!.name, "Late errands");
+  assert.deepEqual([b4!.plannedStart, b4!.plannedEnd], [day(19, "10:00"), day(19, "11:30")]);
+  assert.deepEqual([b5!.plannedStart, b5!.plannedEnd], [day(20, "10:00"), day(20, "11:30")]);
+  // Actual times stay with the occurrence they were logged on.
+  assert.ok(b4!.actualStart === null && b4!.labels.join() === "pending");
+});
+
+test("editing this and following carries only what changed, and keeps stored labels otherwise", async () => {
+  const f = fakes();
+  const { activities: [, a2, , a4] } = await f.createSeries.execute(1, { ...gym, repeat: weeklyMwf });
+  // One later occurrence was renamed and logged on its own, before a grace period change.
+  await f.update.execute(1, a4!.id, { name: "Leg day", actualStart: day(23, "07:12"), actualEnd: day(23, "08:00") });
+  f.grace.lateMinutes = 20;
+  // The whole form is sent back, but only the focus and the notes differ on this occurrence.
+  await f.update.execute(1, a2!.id, {
+    name: "Gym", plannedStart: day(18, "07:00"), plannedEnd: day(18, "08:00"), actualStart: null, actualEnd: null,
+    notes: "<p>bring a towel</p>", focus: "hiit", caloriesBurned: null, items: [],
+  }, "following");
+  const b4 = await f.activities.findByIdForUser(a4!.id, 1);
+  assert.equal(b4!.name, "Leg day");
+  assert.equal(b4!.notes, "<p>bring a towel</p>");
+  assert.equal(b4!.category === "workout" && b4!.focus, "hiit");
+  assert.equal(b4!.actualStart, day(23, "07:12"));
+  assert.deepEqual(b4!.labels, ["late"]); // not relabelled with the new grace period
+});
+
+test("this and following needs a series, and other users' series are not found", async () => {
+  const f = fakes();
+  const single = await f.create.execute(1, { category: "sleep", ...base });
+  await rejects(f.update.execute(1, single.id, { name: "x" }, "following"), 400, /series/);
+  await rejects(f.remove.execute(1, single.id, "following"), 400, /series/);
+  const { activities: [a1] } = await f.createSeries.execute(1, { ...gym, repeat: weeklyMwf });
+  await rejects(f.update.execute(2, a1!.id, { name: "x" }, "following"), 404);
+  await rejects(f.remove.execute(2, a1!.id, "following"), 404);
+});
+
+test("deleting this and following ends the series the day before; the last delete removes it", async () => {
+  const f = fakes();
+  const { series, activities: [a1, a2, a3] } = await f.createSeries.execute(1, {
+    category: "misc", name: "Errands", plannedStart: day(16, "09:00"), plannedEnd: day(16, "10:00"), repeat: dailyTo20,
+  });
+  await f.remove.execute(1, a3!.id, "following");
+  const trimmed = await f.getSeries.execute(1, series.id);
+  assert.equal(trimmed.until, "2026-11-17");
+  assert.equal(trimmed.occurrences, 2);
+  assert.equal(f.activities.rows.size, 2);
+  await f.remove.execute(1, a1!.id);
+  assert.equal((await f.getSeries.execute(1, series.id)).occurrences, 1);
+  await f.remove.execute(1, a2!.id);
+  await rejects(f.getSeries.execute(1, series.id), 404);
 });

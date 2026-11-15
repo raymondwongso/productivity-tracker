@@ -1,5 +1,6 @@
 import type { StatsQuery } from "@productivitytracker/shared";
 import { badRequest } from "../errors.js";
+import { toLocal } from "./recurrence.js";
 
 /** One column a day stays readable up to about three months. */
 export const MAX_STATS_DAYS = 92;
@@ -28,13 +29,7 @@ function parseDate(value: string, label: string): number {
 
 /** Today's date in `tz`, YYYY-MM-DD. Throws a 400 for an unknown zone. */
 export function todayIn(tz: string, now: Date): string {
-  let fmt: Intl.DateTimeFormat;
-  try {
-    fmt = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
-  } catch {
-    throw badRequest(`Unknown time zone "${tz}"`);
-  }
-  return fmt.format(now);
+  return toLocal(now, tz).date;
 }
 
 export function parseStatsRange(q: StatsQuery, now: Date = new Date()): StatsRange {

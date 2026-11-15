@@ -9,7 +9,7 @@ const local = (day: number, hhmm: string) => {
 };
 const act = (day: number, s: string, e: string, endDay = day): Activity => ({
   id: ++id, category: "sleep", categoryId: 1, name: `a${id}`, plannedStart: local(day, s), plannedEnd: local(endDay, e),
-  actualStart: null, actualEnd: null, notes: "", cancelledAt: null, labels: ["pending"], createdAt: "", updatedAt: "",
+  actualStart: null, actualEnd: null, notes: "", cancelledAt: null, labels: ["pending"], seriesId: null, createdAt: "", updatedAt: "",
 });
 const nov = (day: number) => new Date(2026, 10, day);
 

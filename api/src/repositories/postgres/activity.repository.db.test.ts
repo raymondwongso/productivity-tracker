@@ -9,8 +9,11 @@ import { after, before, describe, test } from "node:test";
 import pg from "pg";
 import { loadConfig } from "../../config.js";
 import { CATEGORY_SLUGS } from "../../controllers/activities.controller.js";
+import { CreateActivitySeriesService } from "../../services/create-activity-series.service.js";
 import { CreateActivityService } from "../../services/create-activity.service.js";
+import { DeleteActivityService } from "../../services/delete-activity.service.js";
 import { UpdateActivityService } from "../../services/update-activity.service.js";
+import { ActivitySeriesRepository } from "./activity-series.repository.js";
 import { ActivityRepository } from "./activity.repository.js";
 import { CategoryRepository } from "./category.repository.js";
 import { GameRepository } from "./game.repository.js";
@@ -32,6 +35,9 @@ let games: GameRepository;
 let settings: SettingsRepository;
 let create: CreateActivityService;
 let update: UpdateActivityService;
+let series: ActivitySeriesRepository;
+let createSeries: CreateActivitySeriesService;
+let remove: DeleteActivityService;
 let userId: number;
 let otherUserId: number;
 
@@ -68,8 +74,11 @@ describe("activity repository against a real Postgres", () => {
     games = new GameRepository(pool);
     settings = new SettingsRepository(pool);
     const refs = { projects, titles, games };
+    series = new ActivitySeriesRepository(pool);
     create = new CreateActivityService(new CategoryRepository(pool), settings, refs, activities);
-    update = new UpdateActivityService(settings, refs, activities);
+    update = new UpdateActivityService(settings, refs, activities, series);
+    createSeries = new CreateActivitySeriesService(new CategoryRepository(pool), settings, refs, series, activities);
+    remove = new DeleteActivityService(activities, series);
   });
 
   after(async () => {
@@ -248,4 +257,97 @@ describe("activity repository against a real Postgres", () => {
     assert.deepEqual(utc.map((r) => r.id), [late.id, early.id]);
     assert.equal((await stats.listForStats(otherUserId, "work", "2026-11-20", "2026-11-21", "UTC")).length, 0);
   });
+  test("a series and its occurrences are stored together, with details, in one transaction", async () => {
+    const u = (await pool.query<{ id: number }>(
+      "INSERT INTO users (email, first_name, last_name, password_hash) VALUES ('r@s.co','R','S','x') RETURNING id",
+    )).rows[0]!.id;
+    const { series: s, activities: occ } = await createSeries.execute(u, {
+      category: "workout", name: "Gym", plannedStart: "2026-12-07T07:00:00Z", plannedEnd: "2026-12-07T08:00:00Z",
+      focus: "strength", items: [{ name: "Squat", amount: 5, unit: "x" }],
+      repeat: { frequency: "weekly", every: 1, weekdays: [3, 1], until: "2026-12-16", timeZone: "UTC" },
+    });
+    assert.deepEqual(
+      { ...s, id: 0, categoryId: 0 },
+      { id: 0, categoryId: 0, frequency: "weekly", every: 1, weekdays: [1, 3], startsOn: "2026-12-07", until: "2026-12-16", timeZone: "UTC", occurrences: 4 },
+    );
+    assert.deepEqual(occ.map((a) => a.plannedStart), [
+      "2026-12-07T07:00:00.000Z", "2026-12-09T07:00:00.000Z", "2026-12-14T07:00:00.000Z", "2026-12-16T07:00:00.000Z",
+    ]);
+    assert.ok(occ.every((a) => a.seriesId === s.id && a.category === "workout" && a.items.length === 1));
+    // The calendar's range query returns occurrences like any activity, with their series.
+    const week = await activities.listInRange(u, new Date("2026-12-07T00:00:00Z"), new Date("2026-12-14T00:00:00Z"));
+    assert.deepEqual(week.map((a) => a.seriesId), [s.id, s.id]);
+    assert.equal(await series.findByIdForUser(s.id, otherUserId), null);
+
+    // A failing occurrence rolls back the series and every occurrence before it.
+    const before = (await pool.query<{ n: number }>("SELECT count(*) AS n FROM activity_series")).rows[0]!.n;
+    const good = { userId: u, categoryId: occ[0]!.categoryId, ...stateOfPending("2026-12-20T07:00:00Z"), details: { category: "misc" as const } };
+    await assert.rejects(
+      series.create(
+        { userId: u, categoryId: good.categoryId, frequency: "daily", every: 1, weekdays: null, startsOn: "2026-12-20", until: "2026-12-21", timeZone: "UTC" },
+        [good, { ...good, labels: ["done"] }],
+      ),
+      (e: unknown) => (e as { code?: string }).code === "23514",
+    );
+    assert.equal((await pool.query<{ n: number }>("SELECT count(*) AS n FROM activity_series")).rows[0]!.n, before);
+    assert.equal((await pool.query("SELECT 1 FROM activities WHERE planned_start = '2026-12-20T07:00:00Z'")).rowCount, 0);
+  });
+
+  test("this and following: edits are written together and deletes trim the series", async () => {
+    const u = (await pool.query<{ id: number }>(
+      "INSERT INTO users (email, first_name, last_name, password_hash) VALUES ('f@g.co','F','G','x') RETURNING id",
+    )).rows[0]!.id;
+    // Daily 22:00 → 06:00 in Jakarta (UTC+7): 15:00Z → 23:00Z.
+    const { series: s, activities: occ } = await createSeries.execute(u, {
+      category: "sleep", name: "Sleep", plannedStart: "2026-12-01T15:00:00Z", plannedEnd: "2026-12-01T23:00:00Z",
+      repeat: { frequency: "daily", every: 1, weekdays: null, until: "2026-12-05", timeZone: "Asia/Jakarta" },
+    });
+    assert.equal(occ.length, 5);
+    await update.execute(u, occ[2]!.id, { name: "Early night", plannedStart: "2026-12-03T14:30:00Z" }, "following");
+    const after = await activities.listFollowing(s.id, u, new Date(0));
+    assert.deepEqual(after.map((a) => [a.name, a.plannedStart.slice(0, 16), a.plannedEnd.slice(0, 16)]), [
+      ["Sleep", "2026-12-01T15:00", "2026-12-01T23:00"],
+      ["Sleep", "2026-12-02T15:00", "2026-12-02T23:00"],
+      ["Early night", "2026-12-03T14:30", "2026-12-03T23:00"],
+      ["Early night", "2026-12-04T14:30", "2026-12-04T23:00"],
+      ["Early night", "2026-12-05T14:30", "2026-12-05T23:00"],
+    ]);
+    // updateMany writes all or nothing.
+    assert.equal(await activities.updateMany(u, [{ id: occ[0]!.id, state: { ...stateOfPending("2026-12-01T15:00:00Z"), details: { category: "sleep" } } }, { id: 999999, state: { ...stateOfPending("2026-12-01T15:00:00Z"), details: { category: "sleep" } } }]), null);
+    assert.equal((await activities.findByIdForUser(occ[0]!.id, u))!.name, "Sleep");
+
+    // 22:00 local on the 4th; the series now ends on the 3rd (local), not on a UTC date.
+    await remove.execute(u, occ[3]!.id, "following");
+    const trimmed = await series.findByIdForUser(s.id, u);
+    assert.deepEqual([trimmed!.until, trimmed!.occurrences], ["2026-12-03", 3]);
+    for (const a of occ.slice(0, 3)) await remove.execute(u, a.id);
+    assert.equal(await series.findByIdForUser(s.id, u), null);
+  });
+
+  test("the series constraints reject rules the API can't produce", async () => {
+    const insert = (frequency: string, everyN: number, weekdays: number[] | null, startsOn: string, endsOn: string) =>
+      pool.query(
+        `INSERT INTO activity_series (user_id, category_id, frequency, every_n, weekdays, starts_on, ends_on, time_zone)
+         VALUES ($1, 1, $2, $3, $4, $5, $6, 'UTC')`,
+        [userId, frequency, everyN, weekdays, startsOn, endsOn],
+      );
+    const violates = (name: string) => (e: unknown) => (e as { constraint?: string }).constraint === name;
+    await assert.rejects(insert("monthly", 1, null, "2026-12-01", "2026-12-02"), violates("activity_series_frequency"));
+    await assert.rejects(insert("daily", 0, null, "2026-12-01", "2026-12-02"), violates("activity_series_every_n"));
+    await assert.rejects(insert("daily", 1, [1], "2026-12-01", "2026-12-02"), violates("activity_series_weekdays"));
+    await assert.rejects(insert("weekly", 1, [], "2026-12-01", "2026-12-02"), violates("activity_series_weekdays"));
+    await assert.rejects(insert("weekly", 1, [8], "2026-12-01", "2026-12-02"), violates("activity_series_weekdays"));
+    await assert.rejects(insert("daily", 1, null, "2026-12-01", "2026-11-30"), violates("activity_series_range"));
+    await assert.rejects(insert("daily", 1, null, "2026-01-31", "2026-03-01"), violates("activity_series_range"));
+    await insert("daily", 1, null, "2026-01-31", "2026-02-28");
+  });
 });
+
+/** A pending one-hour activity's state, for writing through the repositories directly. */
+function stateOfPending(start: string) {
+  const plannedStart = new Date(start);
+  return {
+    name: "Block", plannedStart, plannedEnd: new Date(plannedStart.getTime() + 60 * 60_000), actualStart: null, actualEnd: null,
+    notes: "", cancelledAt: null, labels: ["pending" as const],
+  };
+}

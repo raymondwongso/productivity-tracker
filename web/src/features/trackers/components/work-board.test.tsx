@@ -10,7 +10,7 @@ afterEach(cleanup);
 const at = (d: number, hhmm: string) => new Date(`2026-11-${String(d).padStart(2, "0")}T${hhmm}`).toISOString();
 const work = (id: number, d: number, o: Partial<WorkActivity> = {}): WorkActivity => ({
   id, category: "work", categoryId: 2, name: `Task ${id}`, plannedStart: at(d, "09:00"), plannedEnd: at(d, "10:00"),
-  actualStart: null, actualEnd: null, notes: "", cancelledAt: null, labels: ["pending"], createdAt: "", updatedAt: "",
+  actualStart: null, actualEnd: null, notes: "", cancelledAt: null, labels: ["pending"], seriesId: null, createdAt: "", updatedAt: "",
   project: { id: 1, name: "Website" }, ...o,
 });
 const NOW = new Date(2026, 10, 15, 12);
