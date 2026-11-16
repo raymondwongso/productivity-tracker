@@ -57,7 +57,8 @@ Labels are computed by `computeLabels` (`shared/src/labels.ts`) and **stored** i
 - The API writes them when an activity is created, when a planned or actual time changes, and on cancel or restore, using the grace periods in the `settings` table at that moment (late 10, premature 15, overrun 15 minutes by default).
 - Changing a grace period never relabels existing activities. Editing only the name, notes or category fields keeps the stored labels.
 - "Late" depends on the actual start only. An activity that hasn't started is `pending`, however far past its planned start.
-- Only nine sets can be stored: `{pending}`, `{}` (started on time, not finished), `{late}`, `{done}`, `{premature}`, `{overrun}`, `{late,premature}`, `{late,overrun}`, `{cancelled}`. Named CHECK constraints in `006_create_activities.sql` enforce this and every rule that doesn't depend on a grace period.
+- Only nine sets can be stored: `{pending}`, `{}` (started on time, not finished), `{late}`, `{done}`, `{premature}`, `{overrun}`, `{late,premature}`, `{late,overrun}`, `{cancelled}`. Named CHECK constraints in `006_create_activities.sql` (one corrected in `015_fix_labels_finished.sql`) enforce this and every rule that doesn't depend on a grace period.
+- A finished activity can be `{late}` alone (started late, ended on time), so whether an activity is finished is decided by `actual_end`, not by its labels.
 
 To change a grace period: `UPDATE settings SET value = 20 WHERE key = 'graceful_late_period';`
 
