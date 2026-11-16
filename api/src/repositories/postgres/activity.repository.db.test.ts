@@ -183,6 +183,17 @@ describe("activity repository against a real Postgres", () => {
     assert.deepEqual(await activities.listInRange(userId, new Date(t("07:00", 21)), new Date(t("00:00", 22))), []);
   });
 
+  test("a finished activity that started late but ended on time saves as late, also across midnight", async () => {
+    const night = await create.execute(userId, { category: "sleep", name: "Night", plannedStart: t("16:00", 26), plannedEnd: t("00:00", 27) });
+    const slept = await update.execute(userId, night.id, { actualStart: t("18:00", 26), actualEnd: t("00:00", 27) });
+    assert.deepEqual(slept.labels, ["late"]);
+    assert.equal(slept.actualEnd, t("00:00", 27));
+    const day = await create.execute(userId, {
+      category: "sleep", name: "Nap", plannedStart: t("09:00", 26), plannedEnd: t("10:00", 26), actualStart: t("09:12", 26), actualEnd: t("10:05", 26),
+    });
+    assert.deepEqual(day.labels, ["late"]);
+  });
+
   test("the label constraints reject rows the label rules can't produce", async () => {
     const a = await create.execute(userId, {
       category: "sleep", name: "C", plannedStart: t("09:00", 25), plannedEnd: t("10:00", 25), actualStart: t("09:00", 25), actualEnd: t("10:00", 25),
@@ -194,7 +205,7 @@ describe("activity repository against a real Postgres", () => {
       ["labels = '{overrun,overrun}'", "activities_labels_valid"], // a duplicate
       ["labels = '{overrun,late}'", "activities_labels_valid"],
       ["actual_end = NULL, labels = '{pending}'", "activities_labels_pending"], // started, so not pending
-      ["labels = '{late}'", "activities_labels_finished"],
+      ["labels = '{}'", "activities_labels_finished"], // finished, so not merely started
       ["cancelled_at = now()", "activities_labels_cancelled"],
       ["actual_end = NULL", "activities_labels_end_needs_end"],
       ["planned_end = planned_start + interval '25 hours'", "activities_planned_max_24h"],
